@@ -1,0 +1,7 @@
+cython
+numpy
+networkx
+poetry
+pysam
+xopen
+
