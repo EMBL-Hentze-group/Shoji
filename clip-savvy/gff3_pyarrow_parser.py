@@ -8,6 +8,7 @@ import pyarrow as pa
 from networkx import DiGraph, ancestors
 from pyarrow import csv
 
+from . import pyarrow_reader as pr
 from .gene import Gene
 from .output import output_writer
 
@@ -93,6 +94,7 @@ class GFF3parser:
             self.gff,
         )
         with self._ow(self.out) as _fh:
+            # _fh: Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
             for chrom in chroms:
                 logging.info("Parsing gene and feature data from %s", chrom)
                 self._feats: List[Dict] = gff3_pa.filter(
@@ -112,6 +114,7 @@ class GFF3parser:
                 )
                 self._sort_coordinates()
                 # now write to file
+                # TODO: move this to a helper function
                 while True:
                     try:
                         (begin, end, name, score, strand) = heapq.heappop(self._heap)
@@ -129,38 +132,8 @@ class GFF3parser:
         Returns:
             pyarrow Table
         """
-        # TODO: add pyarrow table type for return
-        # column names from gff3 documentation
-        read_opts = csv.ReadOptions(
-            column_names=[
-                "seqid",
-                "source",
-                "type",
-                "start",
-                "end",
-                "score",
-                "strand",
-                "phase",
-                "attributes",
-            ]
-        )
-
-        def skip_comment(row) -> str:
-            # comment skipper
-            if row.text.startswith("#"):
-                return "skip"
-            return "error"
-
-        parse_opts = csv.ParseOptions(delimiter="\t", invalid_row_handler=skip_comment)
-        convert_opts = csv.ConvertOptions(
-            column_types={"start": pa.uint32(), "end": pa.uint32()}
-        )
-        return csv.read_csv(
-            self.gff,
-            read_options=read_opts,
-            parse_options=parse_opts,
-            convert_options=convert_opts,
-        ).drop_columns(["source", "score", "phase"])
+        gff3_reader = pr.Reader()
+        return gff3_reader.gff(self.gff).drop_columns(["source", "score", "phase"])
 
     def _gene_feature_dependancy(self) -> None:
         """_gene_feature_dependancy generate gene feature dependancy per chromosome
