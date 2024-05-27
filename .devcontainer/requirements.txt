@@ -4,4 +4,5 @@ networkx
 poetry
 pysam
 xopen
+pyarrow
 
