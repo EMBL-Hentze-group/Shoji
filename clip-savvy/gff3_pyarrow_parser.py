@@ -6,7 +6,6 @@ from typing import Callable, Dict, List, Optional, Set
 
 import pyarrow as pa
 from networkx import DiGraph, ancestors
-from pyarrow import csv
 
 from . import pyarrow_reader as pr
 from .gene import Gene
@@ -86,7 +85,7 @@ class GFF3parser:
         gff3_pa = self._read_gff3()
         if gff3_pa.shape[0] == 0:
             raise RuntimeError(f"Cannot parse annotation features from {self.gff}!")
-        chroms: List[str] = sorted(gff3_pa.column("seqid").unique().tolist())
+        chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
         logger.info(
             "Found %s features from %s chromosomes in %s",
             f"{gff3_pa.shape[0]:,}",
@@ -98,32 +97,27 @@ class GFF3parser:
             for chrom in chroms:
                 logging.info("Parsing gene and feature data from %s", chrom)
                 self._feats: List[Dict] = gff3_pa.filter(
-                    pa.compute.field("seqid") == chrom
+                    pa.compute.field("seqname") == chrom
                 ).to_pylist()
+                # generate dependancy
                 self._gene_feature_dependancy()
                 logging.info(
                     "   %s: found %s genes and features",
                     chrom,
                     f"{len(self._gene_graph):,}",
                 )
+                # parse features
                 self._parse_gene_features(feature_type=feature_type)
                 logging.info(
                     "   %s: mapped features to %s genes",
                     chrom,
                     f"{len(self._gene_feature_map):,}",
                 )
+                # sort features
                 self._sort_coordinates()
                 # now write to file
-                # TODO: move this to a helper function
-                while True:
-                    try:
-                        (begin, end, name, score, strand) = heapq.heappop(self._heap)
-                        _fh.write(
-                            f"{chrom}\t{begin}\t{end}\t{name}\t{score}\t{strand}\n"
-                        )
-                    except IndexError:
-                        _fh.flush()
-                        break
+                self._write(_fh, chrom)
+
         logging.info("Wrote sorted featues to %s", self.out)
 
     def _read_gff3(self):
@@ -132,8 +126,8 @@ class GFF3parser:
         Returns:
             pyarrow Table
         """
-        gff3_reader = pr.Reader()
-        return gff3_reader.gff(self.gff).drop_columns(["source", "score", "phase"])
+        gff3_reader = pr.Reader(self.gff)
+        return gff3_reader.gff().drop_columns(["source", "score", "frame"])
 
     def _gene_feature_dependancy(self) -> None:
         """_gene_feature_dependancy generate gene feature dependancy per chromosome
@@ -182,7 +176,7 @@ class GFF3parser:
                 uid: str = attribs[self.idx_id]
             except KeyError:
                 uid: str = self._uid.substitute(
-                    chrom=f["seqid"],
+                    chrom=f["seqname"],
                     start=str(f["start"]),
                     end=str(f["end"]),
                     strand=f["strand"],
@@ -195,7 +189,7 @@ class GFF3parser:
                     logging.warning(
                         "Cannot find 'gene' for feature %s--> %s:%i-%i(%s) with attributes %s! Skipping",
                         f["type"],
-                        f["seqid"],
+                        f["seqname"],
                         f["start"],
                         f["end"],
                         f["strand"],
@@ -211,7 +205,7 @@ class GFF3parser:
             ):
                 # either a gene or
                 # a gene like feature with id not found in the gene dependanch graph
-                self._add_gene_info(f["seqid"], start, f["end"], f["strand"], attribs)
+                self._add_gene_info(f["seqname"], start, f["end"], f["strand"], attribs)
 
     def _get_feature_type_checker(self) -> Callable:
         """_get_feature_type_checker
@@ -397,6 +391,21 @@ class GFF3parser:
                     ),
                 )
 
+    def _write(self, fh, chrom: str) -> None:
+        """_write write to file
+        Pop items from the list and write to the file handle
+        Args:
+            fh: file handle, Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
+            chrom: chromosome name
+        """
+        while True:
+            try:
+                (begin, end, name, score, strand) = heapq.heappop(self._heap)
+                fh.write(f"{chrom}\t{begin}\t{end}\t{name}\t{score}\t{strand}\n")
+            except IndexError:
+                fh.flush()
+                break
+
 
 # import sys
 
@@ -409,30 +418,30 @@ class GFF3parser:
 #     handler.setLevel(logging.DEBUG)
 #     root.addHandler(handler)
 
-# gencode = GFF3parser(
-#     gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
-#     out="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.pa.bed",
-#     parent_id="Parent",
-#     idx_id="ID",
-#     gene_name="gene_name",
-#     gene_id="gene_id",
-#     gene_type="gene_type",
-#     gene_like_features=set(["tRNA"]),
-#     use_tabix=False,
-# )
-# gencode.process()
-#     ensembl = GFF3parser(
-#         gff="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.111.gff3.gz",
-#         out="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.pa_bz2.bed.bz2",
+#     gencode = GFF3parser(
+#         gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
+#         out="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.new_format.bed.gz",
 #         parent_id="Parent",
 #         idx_id="ID",
-#         gene_name="Name",
+#         gene_name="gene_name",
 #         gene_id="gene_id",
-#         gene_type="biotype",
-#         gene_like_features=None,
-#         use_tabix=False,
+#         gene_type="gene_type",
+#         gene_like_features=set(["tRNA"]),
+#         use_tabix=True,
 #     )
-#     ensembl.process()
+#     gencode.process()
+#     # ensembl = GFF3parser(
+#     #     gff="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.111.gff3.gz",
+#     #     out="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.pa_bz2.bed.bz2",
+#     #     parent_id="Parent",
+#     #     idx_id="ID",
+#     #     gene_name="Name",
+#     #     gene_id="gene_id",
+#     #     gene_type="biotype",
+#     #     gene_like_features=None,
+#     #     use_tabix=False,
+#     # )
+#     # ensembl.process()
 
 
 # if __name__ == "__main__":
