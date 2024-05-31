@@ -43,6 +43,7 @@ class SlidingWindows:
                 size=self.size,
                 use_tabix=self.use_tabix,
             )
+        logger.info("Output wrote to %s", self.out)
 
     def _check_tabix(self) -> bool:
         """_check_tabix check for tabix indices
@@ -74,7 +75,7 @@ def _tabix_sliding_windows(
     """
     owriter = output_writer(out, use_tabix=use_tabix, preset="bed")
     with pysam.TabixFile(annotation) as annh, owriter(out) as oh:  # type: ignore
-        chroms = sorted(annh.contigs)
+        chroms: List[str] = sorted(annh.contigs)
         for chrom in chroms:
             # heap to store windows
             heap = []
@@ -96,22 +97,15 @@ def _tabix_sliding_windows(
                     )
             logging.info("Chromosome: %s, # features: %s", chrom, f"{fc:,}")
             _heap_windows_writer(heap, chrom, oh)
-            # while True:
-            #     try:
-            #         (start, end, name, score, strand) = heapq.heappop(heap)
-            #         oh.write(f"{chrom}\t{start}\t{end}\t{name}\t{score}\t{strand}\n")
-            #     except IndexError:
-            #         oh.flush()
-            #         break
 
 
 def _parquet_sliding_windows(
     annotation: str, out: str, step: int, size: int, use_tabix: bool
 ) -> None:
-    tmp_dir = str(Path(annotation).parent)
+    tmp_dir = str(Path(out).parent)
     owriter = output_writer(out=out, use_tabix=use_tabix, preset="bed")
     with pr.PartionedParquetReader(
-        in_file=annotation, fformat="bed6", tmp_dir=tmp_dir
+        file_name=annotation, fformat="bed6", temp_dir=tmp_dir
     ) as ppq, owriter(out) as oh:  # type: ignore
         fragments = ppq.get_partitioned_fragments()
         chroms = sorted(fragments.keys())
@@ -188,27 +182,3 @@ def _heap_windows_writer(heap, chrom, out_handle) -> None:
         except IndexError:
             out_handle.flush()
             break
-
-
-# import sys
-
-
-# def main():
-#     root = logging.getLogger()
-#     root.setLevel(logging.DEBUG)
-
-#     handler = logging.StreamHandler(sys.stdout)
-#     handler.setLevel(logging.DEBUG)
-#     root.addHandler(handler)
-#     tabix_bed = "/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.new_format.bed"
-#     window = 100
-#     step = 20
-#     tabix_sw = f"/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.{window}_{step}.bed"
-#     sw_tabix = SlidingWindows(
-#         annotation=tabix_bed, out=tabix_sw, step=step, size=window, use_tabix=False
-#     )
-#     sw_tabix.generate_sliding_windows()
-
-
-# if __name__ == "__main__":
-#     main()
