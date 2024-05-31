@@ -205,10 +205,10 @@ class PartionedParquetReader:
     partitiotioning on chromosome (default) and read individual files
     """
 
-    def __init__(self, in_file: str, fformat: str, tmp_dir: str) -> None:
-        self.in_file: str = in_file
-        self._pr = Reader(self.in_file, tmp_dir)
-        self._tmp_pq: str = self._touch_tmp_pq(tmp_dir)
+    def __init__(self, file_name: str, fformat: str, temp_dir: str) -> None:
+        self.file_name: str = file_name
+        self._pr = Reader(self.file_name, temp_dir)
+        self._tmp_pq: str = self._touch_tmp_pq(temp_dir)
         self._is_gff: bool = False
         self._is_bed6: bool = False
         self._is_supported_format(fformat)
@@ -257,16 +257,17 @@ class PartionedParquetReader:
                 f"Format not supported! 'format' MUST BE one of {format_str}, found {fformat}"
             )
 
-    def _touch_tmp_pq(self, tmp_dir) -> str:
+    def _touch_tmp_pq(self, temp_dir) -> str:
         """_tmp_pq
         Create tmp. parquet file
         Args:
-            tmp_dir: str, tmp. dir name. MUST exist
+            temp_dir: str, tmp. dir name. MUST exist
 
         Returns:
             temp. parquet file name
         """
-        return str(Path(tmp_dir) / next(tempfile._get_candidate_names()))
+        second_tmp_dir = tempfile.mkdtemp(dir=temp_dir)
+        return second_tmp_dir  # type: ignore
 
     def get_partitioned_fragments(self) -> Dict[str, pds.ParquetFileFragment]:
         """get_partitioned_fragments partitioned fragment
