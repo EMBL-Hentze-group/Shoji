@@ -36,7 +36,7 @@ def output_writer(out: str, use_tabix: bool, preset: str) -> Callable:
         raise NotImplementedError(
             f"Cannot use tabix index with {out_suffix} for output file {out}"
         )
-    elif out_suffix in tabix_suffix and use_tabix:
+    if out_suffix in tabix_suffix and use_tabix:
         logger.info("%s format: bgzip, create tabix index: True", out)
         return partial(tabix_writer, preset=preset)
     elif out_suffix in xopen_suffix:
