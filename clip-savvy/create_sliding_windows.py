@@ -7,11 +7,11 @@ from pathlib import Path
 from shutil import rmtree
 from typing import Dict, List, Tuple
 
-# from .
-import pyarrow_reader as pr
 import pysam
-from output import general_accumulator, output_writer, tabix_accumulator
 from pyarrow.dataset import ParquetFileFragment
+
+from . import pyarrow_reader as pr
+from .output import general_accumulator, output_writer, tabix_accumulator
 
 logger = logging.getLogger(__name__)
 
