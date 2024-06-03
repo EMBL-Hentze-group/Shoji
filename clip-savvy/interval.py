@@ -53,7 +53,7 @@ class Interval:
             return False
         return self.first >= other.last
 
-    def __and__(self, other: "Interval"):
+    def __and__(self, other: "Interval") -> "Interval":
         if not isinstance(other, Interval):
             return NotImplemented
         if (self.empty or other.empty) or (self > other) or (self < other):
@@ -71,7 +71,9 @@ class Interval:
     def __or__(self, other: "Interval") -> "Interval":
         if not isinstance(other, Interval):
             return NotImplemented
-        if self.empty and (not other.empty):
+        if self.empty and other.empty:
+            return self.__class__()
+        elif self.empty and (not other.empty):
             return other
         elif (not self.empty) and (other.empty):
             return self
@@ -96,6 +98,18 @@ class Interval:
                     difference.append((sstart, sstop))
         return self._merge_overlaps(difference)
 
+    def __invert__(self) -> "Interval":
+        if self.empty:
+            return self.__class__()
+        prev_ends: List[int] = [i[1] for i in self.intervals][:-1]
+        cur_starts: List[int] = [i[0] for i in self.intervals][1:]
+        inverts: List[Tuple[int, int]] = []
+        for end, start in zip(prev_ends, cur_starts):
+            if end >= start:
+                continue
+            inverts.append((end, start))
+        return self._merge_overlaps(inverts)
+
     @staticmethod
     def _merge_overlaps(overlaps: List[Tuple[int, int]]) -> "Interval":
         """_merge_overlaps merge overlapping intervals
@@ -108,8 +122,7 @@ class Interval:
         """
         intervals = sorted(set(overlaps))
         if len(intervals) == 1:
-            intv = Interval()
-            intv.add(start=intervals[0][0], end=intervals[0][1])
+            intv = Interval(start=intervals[0][0], end=intervals[0][1])
             return intv
         iintervals = iter(intervals)
         start, end = next(iintervals)
@@ -128,6 +141,8 @@ class Interval:
 
     @property
     def intervals(self) -> List[Tuple[int, int]]:
+        if self.empty:
+            return []
         return self._intervals
 
     @property
@@ -171,12 +186,12 @@ class Interval:
         if len(self._intervals) == 0:
             # no entries so far
             self._intervals.append((start, end))
-        elif not self.__exists__(start, end):
+        elif not self.__contains__(start, end):
             # insert the interval if it is not a duplicate
-            self._insert_or_modify(start, end)
+            self._insert(start, end)
 
-    def __exists__(self, start: int, end: int) -> bool:
-        """_exists check if an entry exists
+    def __contains__(self, start: int, end: int) -> bool:
+        """__contains__ check if an entry exists
         Helper function
         source: https://stackoverflow.com/questions/212358/binary-search-bisection-in-python
         Args:
@@ -231,8 +246,8 @@ class Interval:
         """
         return max(start, istart) < min(end, iend)
 
-    def _insert_or_modify(self, start: int, end: int) -> None:
-        """_insert_or_modify insert new interval or modify exisiting
+    def _insert(self, start: int, end: int) -> None:
+        """_insert insert new interval or modify exisiting
         Given a non duplicate interval, insert a new interval or modify and extend existing ones
         Args:
             start: int, start position of the new interval
