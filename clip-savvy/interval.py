@@ -2,6 +2,8 @@ from bisect import bisect_left, insort
 from functools import total_ordering
 from typing import List, Optional, Tuple
 
+from numpy import diff
+
 
 @total_ordering
 class Interval:
@@ -10,7 +12,7 @@ class Interval:
     """
 
     def __init__(self, start: Optional[int] = None, end: Optional[int] = None) -> None:
-        self._intervals = []
+        self._intervals: List[Tuple[int, int]] = []
         if (start is not None) and (end is not None):
             self.add(start, end)
 
@@ -66,6 +68,10 @@ class Interval:
                 istart: int = max(sstart, ostart)
                 istop: int = min(sstop, ostop)
                 intersections.append((istart, istop))
+        if len(intersections) == 0:
+            return self.__class__()
+        if len(intersections) == 1:
+            return Interval(start=intersections[0][0], end=intersections[0][1])
         return self._merge_overlaps(intersections)
 
     def __or__(self, other: "Interval") -> "Interval":
@@ -88,14 +94,20 @@ class Interval:
             return self
         difference: List[Tuple[int, int]] = []
         for sstart, sstop in self.intervals:
+            overlap = False
             for cstart, cstop in common.intervals:
                 if self._intersects(sstart, sstop, cstart, cstop):
+                    overlap = True
                     if abs(sstart - cstart) > 0:
                         difference.append(tuple(sorted((sstart, cstart))))  # type: ignore
                     if abs(sstop - cstop) > 0:
                         difference.append(tuple(sorted((sstop, cstop))))  # type: ignore
-                else:
-                    difference.append((sstart, sstop))
+            if not overlap:
+                difference.append((sstart, sstop))
+        if len(difference) == 0:
+            return self.__class__()
+        if len(difference) == 1:
+            return Interval(start=difference[0][0], end=difference[0][1])
         return self._merge_overlaps(difference)
 
     def __invert__(self) -> "Interval":
@@ -108,6 +120,10 @@ class Interval:
             if end >= start:
                 continue
             inverts.append((end, start))
+        if len(inverts) == 0:
+            return self.__class__()
+        if len(inverts) == 1:
+            return Interval(inverts[0][0], inverts[0][1])
         return self._merge_overlaps(inverts)
 
     @staticmethod
