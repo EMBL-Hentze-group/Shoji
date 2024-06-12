@@ -1,4 +1,3 @@
-import heapq
 import logging
 import re
 from string import Template
@@ -7,9 +6,16 @@ from typing import Callable, Dict, List, Optional, Set
 import pyarrow as pa
 from networkx import DiGraph, ancestors
 
-from . import pyarrow_reader as pr
-from .gene import Gene
-from .output import output_writer
+import pyarrow_reader as pr
+from gene import Gene, Feature
+from output import output_writer
+from interval2 import Interval
+from sortedcontainers import SortedList
+
+# from . import pyarrow_reader as pr
+# from .gene import Gene, Feature
+# from .output import output_writer
+# from .interval import Interval
 
 logger = logging.getLogger(__file__)
 
@@ -31,6 +37,7 @@ class GFF3parser:
         gene_name: str = "gene_name",
         gene_type: str = "gene_type",
         use_tabix: bool = True,
+        split_intron: bool = False,
     ) -> None:
         """__init__
         Args:
@@ -43,6 +50,7 @@ class GFF3parser:
             gene_name: "gene_name" attribute in attribute column. Defaults to "gene_name".
             gene_type: "gene_type" attribute in attribute column. Defaults to "gene_type".
             use_tabix: boolean, if True, use bgzip to compress the file and then index the file using tabix
+            split_introns: boolean, If True, any intron that overlaps an exon from another gene split/shortened to remove the overlapping region
         """
         self.gff: str = gff
         self.out: str = out
@@ -55,6 +63,7 @@ class GFF3parser:
         self.gene_type: str = gene_type
         self.gene_name: str = gene_name
         self.use_tabix: bool = use_tabix
+        self.split_intron: bool = split_intron
         # regular expression for gff3 attributes
         self._gffre = re.compile(r"(\w+)\=([^;]+)", re.IGNORECASE)
         # unique id template incase self.idx_id attribute is missing
@@ -70,8 +79,10 @@ class GFF3parser:
         self._gene_graph: DiGraph = DiGraph()
         # save per gene features in a dictionary
         self._gene_feature_map: Dict[str, Gene] = {}
+        # all exon (feature) gene like feature co-ordinates per strand
+        self._strand_intervals: Dict[str, Interval] = {}
         # heap to store and sort co-ordinates
-        self._heap = []
+        self._heap: SortedList = SortedList()
         # output write to write outputs
         self._ow = output_writer(self.out, use_tabix=self.use_tabix, preset="bed")
 
@@ -86,6 +97,7 @@ class GFF3parser:
         if gff3_pa.shape[0] == 0:
             raise RuntimeError(f"Cannot parse annotation features from {self.gff}!")
         chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
+        # strands: List[str] = gff3_pa.column("seqname").unique().tolist()
         logger.info(
             "Found %s features from %s chromosomes in %s",
             f"{gff3_pa.shape[0]:,}",
@@ -102,23 +114,33 @@ class GFF3parser:
                 # generate dependancy
                 self._gene_feature_dependancy()
                 logging.info(
-                    "   %s: found %s genes and features",
+                    "%s: found %s genes and features",
                     chrom,
                     f"{len(self._gene_graph):,}",
                 )
                 # parse features
                 self._parse_gene_features(feature_type=feature_type)
                 logging.info(
-                    "   %s: mapped features to %s genes",
+                    "%s: mapped features to %s genes",
                     chrom,
                     f"{len(self._gene_feature_map):,}",
                 )
-                # sort features
-                self._sort_coordinates()
+                # fill strand intervals
+                if self.split_intron:
+                    logging.info("%s: filling strand intervals", chrom)
+                    self._strand_intervals = {}
+                    self._fill_strand_intervals()
+                    for strand, intr in self._strand_intervals.items():
+                        logging.info(
+                            "%s: %s strand has %s features",
+                            chrom,
+                            strand,
+                            f"{len(intr):,}",
+                        )
+                # sort features and filter intervals
+                self._sort_n_filter_intervals()
                 # now write to file
                 self._write(_fh, chrom)
-
-        logging.info("Wrote sorted featues to %s", self.out)
 
     def _read_gff3(self):
         """_read_gff3 gff3 reader
@@ -168,6 +190,7 @@ class GFF3parser:
         """
 
         self._gene_feature_map = {}
+        self._strand_intervals = {}
         feature_checker = self._get_feature_type_checker()
         for f in self._feats:
             start = f["start"] - 1  # to 0 based format
@@ -200,12 +223,16 @@ class GFF3parser:
                     if g not in self._gene_feature_map:
                         self._gene_feature_map[g] = Gene()
                     self._gene_feature_map[g].add_feature(f["type"], start, f["end"])
+                # if self.split_intron:
+                #     # self._fill_strand_intervals(f["strand"], start, f["end"])
             elif (self._is_parent_node(uid)) or (
                 gene_like_feature and (uid not in self._gene_graph)
             ):
                 # either a gene or
                 # a gene like feature with id not found in the gene dependanch graph
                 self._add_gene_info(f["seqname"], start, f["end"], f["strand"], attribs)
+                # if self.split_intron and gene_like_feature:
+                #     self._fill_strand_intervals(f["strand"], start, f["end"])
 
     def _get_feature_type_checker(self) -> Callable:
         """_get_feature_type_checker
@@ -297,7 +324,7 @@ class GFF3parser:
         return genes
 
     def _add_gene_info(
-        self, chrom: str, begin: int, end: int, strand: str, attribs: Dict[str, str]
+        self, chrom: str, start: int, end: int, strand: str, attribs: Dict[str, str]
     ) -> None:
         """_add_gene_info add gene info
         Helper function, add gene info to self._gene_feature_map dictionary
@@ -326,7 +353,7 @@ class GFF3parser:
             attribs, self.gene_type, "unknown"
         )
         self._gene_feature_map[idx].chrom = chrom
-        self._gene_feature_map[idx].begin = begin
+        self._gene_feature_map[idx].start = start
         self._gene_feature_map[idx].end = end
         self._gene_feature_map[idx].strand = strand
 
@@ -349,47 +376,54 @@ class GFF3parser:
         except KeyError:
             return default
 
-    def _sort_coordinates(self) -> None:
+    def _fill_strand_intervals(self) -> None:
+        """_fill_strand_intervals fill strand intervals
+        Helper function
+        Per chromosome, create an Interval object containing all exon, gene like feature co-ordinates.
+        This Interval object can be used to remove introns a gene that overlaps with exons/gene like features
+        """
+        for dat in self._gene_feature_map.values():
+            if dat.strand not in self._strand_intervals:
+                self._strand_intervals[dat.strand] = Interval()
+            for exon in dat.exons:
+                self._strand_intervals[dat.strand].add(exon[0], exon[1])
+            # self._strand_intervals[dat.strand].add(dat.start, dat.end)
+
+    # def _fill_strand_intervals(self, strand: str, start: int, end: int) -> None:
+    #     """_fill_strand_intervals fill strand intervals
+    #     Helper function
+    #     Per chromosome, create an Interval object containing all exon, gene like feature co-ordinates.
+    #     This Interval object can be used to remove introns a gene that overlaps with exons/gene like features
+    #     """
+    #     if strand not in self._strand_intervals:
+    #         self._strand_intervals[strand] = Interval()
+    #     self._strand_intervals[strand].add(start, end)
+
+    def _sort_n_filter_intervals(self) -> None:
         """_sort_coordinates sort co-ordinates
         Helper function
         Add features to heap to sort
         """
         # empty heap
-        self._heap = []
-        # Template for the name column in final bed format
-        name_col = Template(
-            "${idx}@${name}@${gtype}@${feat}@${ix}/${alln}@${idx}:${feat}${padix}"
-        )
+        # self._heap.clear()
+        introns: List[Feature] = []
+        one_exon: int = 0
+        # fill strand intervals
         for dat in self._gene_feature_map.values():
-            gene_id = dat.gene_id
-            gene_name = dat.gene_name
-            gene_type = dat.gene_type
-            strand = dat.strand
-            for (
-                begin,
-                end,
-                ftype,
-                ix,
-                alln,
-            ) in dat.merge_overlapping_exons_add_introns_add_tags():
-                heapq.heappush(
-                    self._heap,
-                    (
-                        begin,
-                        end,
-                        name_col.substitute(
-                            idx=gene_id,
-                            name=gene_name,
-                            gtype=gene_type,
-                            feat=ftype,
-                            ix=ix,
-                            alln=alln,
-                            padix=f"{ix:04}",
-                        ),
-                        0,
-                        strand,
-                    ),
+            for exon in dat.tagged_exons():
+                self._heap.add(exon)
+            if self.split_intron and len(self._strand_intervals[dat.strand]) > 0:
+                introns = dat.remove_intron_exon_overlaps(
+                    self._strand_intervals[dat.strand]
                 )
+            else:
+                introns = dat.tagged_introns()
+            if len(introns) == 0:
+                one_exon += 1
+                continue
+            for intron in dat.tagged_introns():
+                self._heap.add(intron)
+        logger.info("# Genes with single feature or no features: %s", f"{one_exon:,}")
 
     def _write(self, fh, chrom: str) -> None:
         """_write write to file
@@ -398,38 +432,40 @@ class GFF3parser:
             fh: file handle, Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
             chrom: chromosome name
         """
-        while True:
-            try:
-                (begin, end, name, score, strand) = heapq.heappop(self._heap)
-                fh.write(f"{chrom}\t{begin}\t{end}\t{name}\t{score}\t{strand}\n")
-            except IndexError:
-                fh.flush()
-                break
+        for feature in self._heap:
+            fh.write(
+                f"{chrom}\t{feature.chromStart}\t{feature.chromEnd}\t{feature.name}\t{feature.score}\t{feature.strand}\n"
+            )
+        # clear heap
+        self._heap.clear()
 
 
-# import sys
+import sys
 
 
-# def main():
-#     root = logging.getLogger()
-#     root.setLevel(logging.DEBUG)
+def main():
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
 
-#     handler = logging.StreamHandler(sys.stdout)
-#     handler.setLevel(logging.DEBUG)
-#     root.addHandler(handler)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
 
-#     gencode = GFF3parser(
-#         gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
-#         out="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.new_format.bed.gz",
-#         parent_id="Parent",
-#         idx_id="ID",
-#         gene_name="gene_name",
-#         gene_id="gene_id",
-#         gene_type="gene_type",
-#         gene_like_features=set(["tRNA"]),
-#         use_tabix=True,
-#     )
-#     gencode.process()
+    gencode = GFF3parser(
+        gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
+        out="/workspaces/clip_savvy/test_data/new_insertion_no_split.bed",
+        parent_id="Parent",
+        idx_id="ID",
+        gene_name="gene_name",
+        gene_id="gene_id",
+        gene_type="gene_type",
+        gene_like_features=set(["tRNA"]),
+        use_tabix=False,
+        split_intron=False,
+    )
+    gencode.process()
+
+
 #     # ensembl = GFF3parser(
 #     #     gff="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.111.gff3.gz",
 #     #     out="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.pa_bz2.bed.bz2",
@@ -444,5 +480,5 @@ class GFF3parser:
 #     # ensembl.process()
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

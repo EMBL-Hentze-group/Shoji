@@ -2,8 +2,6 @@ from bisect import bisect_left, insort
 from functools import total_ordering
 from typing import List, Optional, Tuple
 
-from numpy import diff
-
 
 @total_ordering
 class Interval:
@@ -237,6 +235,7 @@ class Interval:
         Returns:
             List[int]
         """
+        # see https://stackoverflow.com/questions/20908047/using-bisect-in-a-list-of-tuples
         ovpos: List[int] = []
         for i, (istart, iend) in enumerate(self._intervals):
             if end <= istart:
