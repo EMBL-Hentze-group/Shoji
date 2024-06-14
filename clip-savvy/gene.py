@@ -1,7 +1,8 @@
 from typing import Dict, List, Tuple, Optional, NamedTuple
+from bisect import bisect_left, bisect_right
 
 # from .interval2 import Interval
-from interval2 import Interval
+from interval import Interval
 
 import logging
 
@@ -111,17 +112,16 @@ class Gene:
             start: feature start position
             end: feature end position
         """
-        try:
-            self._features[feature].add(start, end)
-        except KeyError:
-            self._features[feature] = Interval(start, end)
+        if feature not in self._features:
+            self._features[feature] = Interval()
+        self._features[feature].add(start, end)
 
     @property
     def features(self) -> Dict[str, Interval]:
         return self._features
 
     @property
-    def exons(self) -> List[Tuple[int, int]]:
+    def exons(self) -> Interval:
         """exons exon intervals
         Return merged non overlapping exon intervals
         Raises:
@@ -135,7 +135,9 @@ class Gene:
                 "Gene %s does not have any features. Returning start and end co-ordinates",
                 self.gene_id,
             )
-            return [(self.start, self.end)]
+            exon = Interval()
+            exon.add(self.start, self.end)
+            return exon
         try:
             exons = self.features["exon"]
         except KeyError as k:
@@ -143,6 +145,35 @@ class Gene:
                 f"Cannot find 'exon' features for gene {self.gene_id}: {k}"
             ) from k
         return exons
+
+    @property
+    def exon_start(self) -> int:
+        """exon_start
+        Start position of the first exon
+        Returns:
+            int
+        """
+        return self.features["exon"].first
+
+    @property
+    def exon_end(self) -> int:
+        """exon_end
+        End position of the last exon
+        Returns:
+            int
+        """
+        return self.features["exon"].last
+
+    def nexons(self) -> int:
+        """nexons number of exons"""
+        if len(self._features) == 0:
+            return 1
+        try:
+            return len(self.features["exon"])
+        except KeyError as k:
+            raise KeyError(
+                f"Cannot find 'exon' features for gene {self.gene_id}: {k}"
+            ) from k
 
     def tagged_exons(self) -> List[Feature]:
         if (len(self._features) == 0) or ("exon" not in self.features):
@@ -267,70 +298,29 @@ class Gene:
             )
         return feats
 
-    # def remove_intron_exon_overlaps(self, exons: Interval) -> List[Feature]:
-    #   old version
-    #     if (len(self._features) == 0) or ("exon" not in self.features):
-    #         logger.debug("Gene %s does not have any exons!", self.gene_id)
-    #         return []
-    #     if len(self.features["exon"].intervals) == 1:
-    #         logger.debug("Gene %s has only one exon!", self.gene_id)
-    #         return []
-    #     introns: Interval = ~self.features["exon"]
-    #     index = self._get_index(len(introns))
-    #     split_feats: List[Feature] = []
-    #     for i, (start, end) in enumerate(introns.intervals):
-    #         intron_i: Interval = Interval(start, end)
-    #         split_introns: Interval = intron_i - exons
-    #         if len(split_introns) == 0:
-    #             logger.info(
-    #                 "Skipping intron %s:%s-%s(%s), complete overlap with an exon",
-    #                 self.chrom,
-    #                 f"{start:,}",
-    #                 f"{end:,}",
-    #                 self.strand,
-    #             )
-    #             continue
-    #         split_counter = self._get_index(len(split_introns))
-    #         for j, (split_start, split_end) in enumerate(split_introns.intervals):  # type: ignore
-    #             if introns.__contains__(split_start, split_end):
-    #                 split_index = None
-    #             else:
-    #                 split_index = split_counter[j]
-    #             split_feats.append(
-    #                 Feature(
-    #                     chromStart=split_start,
-    #                     chromEnd=split_end,
-    #                     name=self._name_formatter(
-    #                         index=index[i],
-    #                         n=len(introns),
-    #                         feature_type="intron",
-    #                         split_index=split_index,
-    #                     ),
-    #                     score=0,
-    #                     strand=self.strand,
-    #                 )
-    #             )
-    #     return split_feats
-
-    def remove_intron_exon_overlaps(self, exons: Interval) -> List[Feature]:
+    def remove_exon_overlapping_intron(self, exons: Interval) -> List[Feature]:
         if (len(self._features) == 0) or ("exon" not in self.features):
             logger.debug("Gene %s does not have any exons!", self.gene_id)
             return []
-        if len(self.features["exon"]) == 1:
+        elif len(self.features["exon"]) == 1:
             logger.debug("Gene %s has only one exon!", self.gene_id)
             return []
+        elif self.features["exon"] == exons:
+            logger.debug("Gene %s: no intron exon overlap", self.gene_id)
+            return self.tagged_introns()
         introns: Interval = ~self.features["exon"]
         index = self._get_index(len(introns))
-
         split_introns = introns - exons
         if len(split_introns) == 0:
-            logger.debug(
-                "Gene %s: all introns overlap with exons of other genes!", self.gene_id
+            logger.info(
+                "Skipping introns from gene: %s introns found: %i, complete overlap with exons of other genes",
+                self.gene_id,
+                len(introns),
             )
             return []
         final_exons: List[Feature] = []
         for i, (start, end) in enumerate(introns):
-            if split_introns.__contains__(start, end):
+            if (start, end) in split_introns:
                 # intron does not overlap any exon
                 final_exons.append(
                     Feature(
@@ -343,25 +333,28 @@ class Gene:
                         strand=self.strand,
                     )
                 )
-            else:
-                # intron overlaps an exon
-                overlap_indices = split_introns.__overlaps__(start, end)
-                if len(overlap_indices) == 0:
-                    continue
-                for o in overlap_indices:
-                    split_start, split_end = split_introns[o]
-                    final_exons.append(
-                        Feature(
-                            chromStart=split_start,
-                            chromEnd=split_end,
-                            name=self._name_formatter(
-                                index=index[i],
-                                n=len(introns),
-                                feature_type="intron",
-                                split_index=o,
-                            ),
-                            score=0,
-                            strand=self.strand,
-                        )
+                continue
+            start_pos = bisect_right(split_introns.ends, start)
+            end_pos = bisect_left(split_introns.starts, end, lo=start_pos)
+            if start_pos == end_pos:
+                # this interval is not present in split_introns
+                # comple overlap with an exon
+                continue
+            for j, (split_start, split_end) in enumerate(
+                split_introns.islice(start_pos, end_pos)
+            ):
+                final_exons.append(
+                    Feature(
+                        chromStart=split_start,
+                        chromEnd=split_end,
+                        name=self._name_formatter(
+                            index=index[i],
+                            n=len(introns),
+                            feature_type="intron",
+                            split_index=j + 1,
+                        ),
+                        score=0,
+                        strand=self.strand,
                     )
+                )
         return final_exons
