@@ -1,14 +1,12 @@
 from typing import List, Optional, Tuple
 from bisect import bisect_left, bisect_right
-from sortedcontainers import SortedList, SortedSet
+from sortedcontainers import SortedList
 from operator import itemgetter
 
 
-class Interval(SortedSet):
-    def __init__(self, start: Optional[int] = None, end: Optional[int] = None):
+class Interval(SortedList):
+    def __init__(self):
         super().__init__()
-        if start is not None and end is not None:
-            self.add(start, end)
 
     def __repr__(self) -> str:
         if len(self) == 0:
@@ -16,91 +14,23 @@ class Interval(SortedSet):
         else:
             return "[" + ", ".join([f"({i[0]}, {i[1]})" for i in self]) + "]"
 
-    def add(self, start: int, end: int) -> None:
-        if start < 0 or end < 0:
-            raise ValueError(
-                f"'start' and 'end' values MUST be >= 0. Found {start} and {end}!"
-            )
-        if end - start <= 0:
-            raise ValueError(
-                f"'end' MUST be larger than 'start'. Found {start} and  {end}!"
-            )
-        if (start, end) not in self:
-            # find the position where the existing end is >= the start
-            start_pos = bisect_right(self._list, start, key=itemgetter(1))
-            # find the position where the existing start is <= the end
-            # no need to search from 0th index, start from start_pos
-            end_pos = bisect_left(self._list, end, lo=start_pos, key=itemgetter(0))
-            if start_pos == end_pos:
-                # new interval does not overlap any existing intervals
-                # or the list is empty
-                super().add((start, end))
-            else:
-                # end_pos will always be the "next" index where this end can be inserted,
-                # but this does not mean that this end overlaps with the interval positions at end_pos
-                for i in range(end_pos - 1, start_pos - 1, -1):
-                    # new interval overlaps with this/these existing interval(s)
-                    start = min(start, self._list[i][0])
-                    end = max(end, self._list[i][1])
-                    _ = self.pop(i)
-                super().add((start, end))
-
-    @property
-    def first(self) -> int:
-        return self[0][0]
-
-    @property
-    def last(self) -> int:
-        return self[-1][1]
-
-    @property
-    def empty(self) -> bool:
-        """empty _summary_
-        shamelessly stolen from
-        https://github.com/AlexandreDecan/portion/blob/master/portion/interval.py#L176
-        credits to the author
-        Returns:
-            _description_
-        """
-        return len(self) == 0
-
-    def __contains__(self, interval: Tuple[int, int]) -> bool:
-        """__contains__ check if an entry exists
-        Helper function
-        source: https://stackoverflow.com/questions/212358/binary-search-bisection-in-python
-        Args:
-            start: start position of the interval
-            end: end position of the interval
-
-        Returns:
-            boolean, True if the interval already exists
-        """
-        pos = self.bisect_left(interval)
-        try:
-            if pos < len(self) and self[pos] == interval:
-                return True
-        except IndexError:
-            return False
-        else:
-            return False
-
     def __iter__(self):
-        return iter(self._list)
+        return super().__iter__()
 
     def __len__(self):
-        return len(self._list)
+        return super().__len__()
 
     def __getitem__(self, index):
-        return self._list[index]
+        return super().__getitem__(index)
 
     def __reversed__(self):
-        return reversed(self._list)
+        return super().__reversed__()
 
     def __delitem__(self, index):
-        del self._list[index]
+        super().__delitem__(index)
 
     def __hash__(self):
-        return hash(tuple(self._list))
+        return hash(tuple(self))
 
     def __eq__(self, other):
         if not isinstance(other, Interval):
@@ -127,7 +57,85 @@ class Interval(SortedSet):
         return self.first >= other.last
 
     def __call__(self):
-        return self._list
+        return self
+
+    def __contains__(self, interval: Tuple[int, int]) -> bool:
+        """__contains__ check if an entry exists
+        Helper function
+        source: https://stackoverflow.com/questions/212358/binary-search-bisection-in-python
+        Args:
+            start: start position of the interval
+            end: end position of the interval
+
+        Returns:
+            boolean, True if the interval already exists
+        """
+        pos = self.bisect_left(interval)
+        try:
+            if pos < len(self) and self[pos] == interval:
+                return True
+        except IndexError:
+            return False
+        else:
+            return False
+
+    @property
+    def first(self) -> int:
+        return self[0][0]
+
+    @property
+    def last(self) -> int:
+        return self[-1][1]
+
+    @property
+    def starts(self) -> List[int]:
+        return [i[0] for i in self]
+
+    @property
+    def ends(self) -> List[int]:
+        return [i[1] for i in self]
+
+    @property
+    def empty(self) -> bool:
+        """empty _summary_
+        shamelessly stolen from
+        https://github.com/AlexandreDecan/portion/blob/master/portion/interval.py#L176
+        credits to the author
+        Returns:
+            _description_
+        """
+        return len(self) == 0
+
+    def add(self, start: int, end: int) -> None:
+        if start < 0 or end < 0:
+            raise ValueError(
+                f"'start' and 'end' values MUST be >= 0. Found {start} and {end}!"
+            )
+        if end - start <= 0:
+            raise ValueError(
+                f"'end' MUST be larger than 'start'. Found {start} and  {end}!"
+            )
+        # find the position where the existing end is >= the start
+        start_pos = bisect_right(self, start, key=itemgetter(1))
+        # find the position where the existing start is <= the end
+        # no need to search from 0th index, start from start_pos
+        end_pos = bisect_left(self, end, lo=start_pos, key=itemgetter(0))
+        if start_pos == end_pos:
+            # new interval does not overlap any existing intervals
+            # or the list is empty
+            super().add((start, end))
+        else:
+            # end_pos will always be the "next" index where this end can be inserted,
+            # but this does not mean that this end overlaps with the interval positions at end_pos
+            for i in range(end_pos - 1, start_pos - 1, -1):
+                if self[i] == (start, end):
+                    # duplicate interval
+                    return
+                # new interval overlaps with this/these existing interval(s)
+                start = min(start, self[i][0])
+                end = max(end, self[i][1])
+                _ = self.pop(i)
+            super().add((start, end))
 
     def _merge_overlap(self):
         """_merge_overlap merge overlapping intervals"""
@@ -141,7 +149,7 @@ class Interval(SortedSet):
                     merged.add((start, end))
                     start, end = i
             merged.add((start, end))
-            self._list = merged
+            self = merged
 
     @staticmethod
     def _intersects(
@@ -164,6 +172,14 @@ class Interval(SortedSet):
             return start_max, end_min
         return None
 
+    def islice(
+        self, istart: Optional[int] = None, istop: Optional[int] = None
+    ) -> "Interval":
+        sliced: Interval = Interval()
+        for start, end in super().islice(start=istart, stop=istop, reverse=False):
+            sliced.add(start, end)
+        return sliced
+
     def __and__(self, other: "Interval") -> "Interval":
         if not isinstance(other, Interval):
             return NotImplemented
@@ -171,16 +187,17 @@ class Interval(SortedSet):
             return self.__class()
         intersections: Interval = Interval()
         for ostart, oend in other:
-            start_pos = bisect_right(self._list, ostart, key=itemgetter(1))
-            end_pos = bisect_left(self._list, oend, lo=start_pos, key=itemgetter(0))
+            start_pos = bisect_right(self, ostart, key=itemgetter(1))
+            end_pos = bisect_left(self, oend, lo=start_pos, key=itemgetter(0))
             if start_pos == end_pos:
                 # this interval fits between two intervals in self
                 # or is either smaller or larger than all intervals in self
                 continue
-            for i in range(end_pos - 1, start_pos - 1, -1):
-                ostart = max(ostart, self._list[i][0])
-                oend = min(oend, self._list[i][1])
-            intersections.add(ostart, oend)
+            for i in range(start_pos, end_pos):
+                ostart = max(ostart, self[i][0])
+                oend = min(oend, self[i][1])
+            if oend > ostart:
+                intersections.add(ostart, oend)
         return intersections
 
     def __or__(self, other: "Interval") -> "Interval":
@@ -194,17 +211,9 @@ class Interval(SortedSet):
             return self
         else:
             unions: Interval = Interval()
+            for start, end in self:
+                unions.add(start, end)
             for ostart, oend in other:
-                start_pos = bisect_right(self._list, ostart, key=itemgetter(1))
-                end_pos = bisect_left(self._list, oend, lo=start_pos, key=itemgetter(0))
-                if start_pos == end_pos:
-                    # this interval fits between two intervals in self
-                    # or is either smaller or larger than all intervals in self
-                    unions.add(ostart, oend)
-                    continue
-                for i in range(end_pos - 1, start_pos - 1, -1):
-                    ostart = min(ostart, self._list[i][0])
-                    oend = max(oend, self._list[i][1])
                 unions.add(ostart, oend)
             return unions
 
@@ -222,21 +231,23 @@ class Interval(SortedSet):
     def __sub__(self, other: "Interval") -> "Interval":
         if not isinstance(other, Interval):
             return NotImplemented
-        common = self & other
-        if common.empty:
-            return self
         difference: Interval = Interval()
-        for start, stop in self:
-            intersects: bool = False
-            for cstart, cstop in common:
-                if overlap := self._intersects(start, stop, cstart, cstop):
-                    intersects = True
-                    if abs(start - overlap[0]) > 0:
-                        cstart, cend = sorted((start, overlap[0]))
-                        difference.add(cstart, cend)
-                    if abs(overlap[1] - stop) > 0:
-                        cstart, cend = sorted((overlap[1], stop))
-                        difference.add(cstart, cend)
-            if not intersects:
-                difference.add(start, stop)
+        for start, end in self:
+            start_pos = bisect_right(other, start, key=itemgetter(1))
+            end_pos = bisect_left(other, end, lo=start_pos, key=itemgetter(0))
+            if start_pos == end_pos:
+                # no overlaps
+                difference.add(start, end)
+                continue
+            overlaps: List[Tuple[int, int]] = list(other.islice(start_pos, end_pos))
+            if start < overlaps[0][0]:
+                difference.add(start, overlaps[0][0])
+            if end > overlaps[-1][1]:
+                difference.add(overlaps[-1][1], end)
+            if len(overlaps) > 1:
+                prev_ends: List[int] = [i[1] for i in overlaps][:-1]
+                next_starts: List[int] = [i[0] for i in overlaps][1:]
+                for pend, nstart in zip(prev_ends, next_starts):
+                    if pend < nstart:
+                        difference.add(pend, nstart)
         return difference
