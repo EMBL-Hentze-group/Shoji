@@ -1,4 +1,3 @@
-import heapq
 import logging
 import multiprocessing as mp
 import tempfile
@@ -9,6 +8,10 @@ from typing import Dict, List, Tuple
 
 import pysam
 from pyarrow.dataset import ParquetFileFragment
+from sortedcontainers import SortedList
+
+# import pyarrow_reader as pr
+# from output import general_accumulator, output_writer, tabix_accumulator
 
 from . import pyarrow_reader as pr
 from .output import general_accumulator, output_writer, tabix_accumulator
@@ -165,31 +168,31 @@ def tabix_sw_worker(
         size: int, window size
     """
     wwriter = output_writer(out, use_tabix=False, preset="bed")
-    heap = []
+    heap = SortedList()
     with pysam.TabixFile(annotation) as _annw, wwriter(out) as _ow:
         for feature in _annw.fetch(chrom, parser=pysam.asBed()):
             for wi, (wstart, wend) in enumerate(
                 _sliding_windows(feature.start, feature.end, step, size)
             ):
-                heapq.heappush(
-                    heap,
+                heap.add(
                     (
-                        chrom,
                         wstart,
                         wend,
                         feature.name + f"W{wi+1:05}@{wi+1}",
                         int(feature.score),
                         feature.strand,
-                    ),
+                    )
                 )
-        _heap_windows_writer(heap, chrom, _ow)
+        for dat in heap:
+            # chromsome, start, stop, name, score, strand
+            _ow.write(f"{chrom}\t{dat[0]}\t{dat[1]}\t{dat[2]}\t{dat[3]}\t{dat[4]}\n")
 
 
 def parquet_sw_worker(
     fragment: ParquetFileFragment, out: str, chrom: str, step: int, size: int
 ) -> None:
     wwriter = output_writer(out, use_tabix=False, preset="bed")
-    heap = []
+    heap = SortedList()
     with wwriter(out) as _ow:
         for feature in fragment.to_table().to_pylist():
             for wi, (wstart, wend) in enumerate(
@@ -200,17 +203,18 @@ def parquet_sw_worker(
                     size,
                 )
             ):
-                heapq.heappush(
-                    heap,
+                heap.add(
                     (
                         wstart,
                         wend,
                         feature["name"] + f"W{wi+1:05}@{wi+1}",
                         int(feature["score"]),
                         feature["strand"],
-                    ),
+                    )
                 )
-        _heap_windows_writer(heap, chrom, _ow)
+        for dat in heap:
+            # chromsome, start, stop, name, score, strand
+            _ow.write(f"{chrom}\t{dat[0]}\t{dat[1]}\t{dat[2]}\t{dat[3]}\t{dat[4]}\n")
 
 
 def _sliding_windows(
@@ -243,23 +247,6 @@ def _sliding_windows(
     return windows
 
 
-def _heap_windows_writer(heap, chrom, out_handle) -> None:
-    """_heap_windows_writer heap writer
-    pop items from the given list/heap and write to the given output handle
-    Args:
-        heap: heap of windows_
-        chrom: str, chromosome name
-        out_handle: output file writer
-    """
-    while True:
-        try:
-            (start, end, name, score, strand) = heapq.heappop(heap)
-            out_handle.write(f"{chrom}\t{start}\t{end}\t{name}\t{score}\t{strand}\n")
-        except IndexError:
-            out_handle.flush()
-            break
-
-
 # import sys
 
 
@@ -270,13 +257,13 @@ def _heap_windows_writer(heap, chrom, out_handle) -> None:
 #     handler = logging.StreamHandler(sys.stdout)
 #     handler.setLevel(logging.DEBUG)
 #     root.addHandler(handler)
-#     tabix_bed = "/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.new_format.bed"
+#     tabix_bed = "/workspaces/clip_savvy/test_data/baseline.gencode.v42.tabix.gz"
 #     window = 100
 #     step = 20
-#     tabix_sw = f"/workspaces/clip_savvy/test_data/mp_tabix.{window}_{step}.bed.gz"
+#     tabix_sw = f"/workspaces/clip_savvy/test_data/mp_tabix2plain.{window}_{step}.bed"
 #     # sw_tabix = SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6)
 #     with SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6) as swx:
-#         swx.generate_sliding_windows(step=step, size=window, use_tabix=True)
+#         swx.generate_sliding_windows(step=step, size=window, use_tabix=False)
 #     # sw_tabix.generate_sliding_windows()
 
 
