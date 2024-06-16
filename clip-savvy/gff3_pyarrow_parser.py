@@ -176,7 +176,7 @@ class GFF3parser:
                 # use position as unique id if ID attribute is not found
                 # format: chromosome|begin|end|strand
                 uid: str = self._uid.substitute(
-                    chrom=f["seqid"],
+                    chrom=f["seqname"],
                     start=str(f["start"]),
                     end=str(f["end"]),
                     strand=f["strand"],
@@ -388,13 +388,10 @@ class GFF3parser:
         Helper function
         Add features to heap to sort
         """
-        # empty heap
-        # self._heap.clear()
         introns: List[Feature] = []
         nexons: int = 0
         nintrons: int = 0
         one_exon: int = 0
-        exon_overlap: int = 0
         # fill strand intervals
         for dat in self._gene_feature_map.values():
             tagged_exons: List[Feature] = dat.tagged_exons()
@@ -421,10 +418,6 @@ class GFF3parser:
             f"{nintrons:,}",
         )
         logger.info("# Genes with single feature or no features: %s", f"{one_exon:,}")
-        if self.split_intron:
-            logger.info(
-                "# Genes with overlapping exon co-ordinates: %s", f"{exon_overlap:,}"
-            )
 
     def _write(self, fh, chrom: str) -> None:
         """_write write to file
@@ -452,33 +445,33 @@ def main():
     handler.setLevel(logging.INFO)
     root.addHandler(handler)
 
-    gencode = GFF3parser(
-        gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
-        out="/workspaces/clip_savvy/test_data/testing_overlap_intron_split.bed",
+    # gencode = GFF3parser(
+    #     gff="/workspaces/clip_savvy/test_data/gff3/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
+    #     out="/workspaces/clip_savvy/test_data/baseline.gencode.v42.bed",
+    #     parent_id="Parent",
+    #     idx_id="ID",
+    #     gene_name="gene_name",
+    #     gene_id="gene_id",
+    #     gene_type="gene_type",
+    #     gene_like_features=set(["tRNA"]),
+    #     use_tabix=False,
+    #     split_intron=False,
+    # )
+    # gencode.process()
+
+    ensembl = GFF3parser(
+        gff="/workspaces/clip_savvy/test_data/gff3/Mus_musculus.GRCm39.111.gff3.gz",
+        out="/workspaces/clip_savvy/test_data/base_line.Mus_musculus.GRCm39.bed.gz",
         parent_id="Parent",
         idx_id="ID",
-        gene_name="gene_name",
+        gene_name="Name",
         gene_id="gene_id",
-        gene_type="gene_type",
-        gene_like_features=set(["tRNA"]),
-        use_tabix=False,
-        split_intron=True,
+        gene_type="biotype",
+        gene_like_features=None,
+        use_tabix=True,
+        split_intron=False,
     )
-    gencode.process()
-
-
-#     # ensembl = GFF3parser(
-#     #     gff="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.111.gff3.gz",
-#     #     out="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.pa_bz2.bed.bz2",
-#     #     parent_id="Parent",
-#     #     idx_id="ID",
-#     #     gene_name="Name",
-#     #     gene_id="gene_id",
-#     #     gene_type="biotype",
-#     #     gene_like_features=None,
-#     #     use_tabix=False,
-#     # )
-#     # ensembl.process()
+    ensembl.process()
 
 
 if __name__ == "__main__":
