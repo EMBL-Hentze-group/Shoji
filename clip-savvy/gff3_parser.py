@@ -1,29 +1,31 @@
-"""gff3_parser
-parse GFF3 formatted files
-"""
-
-import heapq
 import logging
 import re
-from collections import namedtuple
 from string import Template
-from typing import Callable, Dict, Generator, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set
 
-from networkx import DiGraph, ancestors
-from xopen import xopen
+import pyarrow as pa
+import pyarrow_reader as pr
+from chrom_interval import ChromInterval
+from gene import Feature, Gene
+from interval import Interval
+from output import output_writer
+from sortedcontainers import SortedList
+from tree import Node, get_genes
 
-from .gene import Gene
-from .output import output_writer
+# from . import pyarrow_reader as pr
+# from .gene import Gene, Feature
+# from .chrom_intervals import ChromInterval
+# from .output import output_writer
+# from .interval import Interval
+# from .tree import Node, get_genes
 
 logger = logging.getLogger(__file__)
-
-# named tuple for major columns in gff3
-Feature = namedtuple("feature", ["chrom", "ftype", "begin", "end", "strand", "attribs"])
 
 
 class GFF3parser:
     """GFF3parser
-    Parse GFF3 files and extract exons features for genes
+    Parse GFF3 files and extract exon features for genes
+    experimental module using pyarrow
     """
 
     def __init__(
@@ -37,6 +39,7 @@ class GFF3parser:
         gene_name: str = "gene_name",
         gene_type: str = "gene_type",
         use_tabix: bool = True,
+        split_intron: bool = False,
     ) -> None:
         """__init__
         Args:
@@ -48,7 +51,8 @@ class GFF3parser:
             gene_id: "gene_id" attribute in attribute column. Defaults to "gene_id".
             gene_name: "gene_name" attribute in attribute column. Defaults to "gene_name".
             gene_type: "gene_type" attribute in attribute column. Defaults to "gene_type".
-            use_tabix: boolean, if True, use tabix to index gzip file
+            use_tabix: boolean, if True, use bgzip to compress the file and then index the file using tabix
+            split_introns: boolean, If True, any intron that overlaps an exon from another gene split/shortened to remove the overlapping region
         """
         self.gff: str = gff
         self.out: str = out
@@ -61,15 +65,46 @@ class GFF3parser:
         self.gene_type: str = gene_type
         self.gene_name: str = gene_name
         self.use_tabix: bool = use_tabix
+        self.split_intron: bool = split_intron
         # regular expression for gff3 attributes
         self._gffre = re.compile(r"(\w+)\=([^;]+)", re.IGNORECASE)
         # unique id template incase self.idx_id attribute is missing
         # format: chromosome|begin|end|strand
-        self._uid = Template("${chrom}|${begin}|${end}|${strand}")
-        # directed graph with gene -> feature dependency
-        self._gene_graph: DiGraph = DiGraph()
+        self._uid = Template("${chrom}|${start}|${end}|${strand}")
+        # gene -> feature dependency
+        self._gene_tree: Dict[str, Node] = {}
         # save per gene features in a dictionary
         self._gene_feature_map: Dict[str, Gene] = {}
+        # List of features from pyarrow table
+        self._feats: List[Dict] = []
+        # save per gene features in a dictionary
+        self._gene_feature_map: Dict[str, Gene] = {}
+        # all exon (feature) gene like feature co-ordinates per strand
+        self._chrom_intervals = ChromInterval()
+        self._chrom_appender = self._interval_appender()
+        # heap to store and sort co-ordinates
+        self._heap: SortedList = SortedList()
+        # output write to write outputs
+        self._ow = output_writer(self.out, use_tabix=self.use_tabix, preset="bed")
+
+    def _interval_appender(self) -> Callable:
+        """_interval_appender
+        Helper function.
+        If self.split_intron is True, return a function that will add interval to correct chrom strand,
+        else pass
+        Returns:
+            Callable
+        """
+
+        def _add_none(strand: str, start: int, end: int) -> None:
+            pass
+
+        def _add_chrom_interval(strand: str, start: int, end: int) -> None:
+            self._chrom_intervals.add(strand, start, end)
+
+        if self.split_intron:
+            return _add_chrom_interval
+        return _add_none
 
     def process(self, feature_type: str = "exon") -> None:
         """process process gff3 file
@@ -77,150 +112,139 @@ class GFF3parser:
         Args:
             feature_type: str, gff3 third column feature to parse. Defaults to "exon".
         """
-        self._gene_feature_dependancy()
-        self._parse_gene_features(feature_type=feature_type)
-        self._sort_n_write()
-
-    def _gff3_reader(
-        self,
-    ) -> Generator[
-        Feature,
-        None,
-        None,
-    ]:
-        """_gff3_reader Generic gff3 reader
-        Helper function
-        Read GFF3 file and yield a named tupele
-
-        Yields:
-            named tuple with following fields: chrom, ftype, begin, end, strand and attribs
-        """
-
-        with xopen(self.gff) as _gh:
-            for f in _gh:
-                if f[0] == "#":
-                    continue
-                fdat = f.strip().split("\t")
-                if len(fdat) < 9:
-                    continue
-                yield Feature(
-                    fdat[0],  # chromosome
-                    fdat[2],  # type
-                    fdat[3],  # begin
-                    fdat[4],  # end
-                    fdat[6],  # strand
-                    fdat[-1],  # attribute
+        # gff3 pyarrow table
+        gff3_pa = self._read_gff3()
+        if gff3_pa.shape[0] == 0:
+            raise RuntimeError(f"Cannot parse annotation features from {self.gff}!")
+        chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
+        strands: List[str] = gff3_pa.column("strand").unique().tolist()
+        logger.info(
+            "Found %s intervals from %s chromosomes in %s",
+            f"{gff3_pa.shape[0]:,}",
+            f"{len(chroms):,}",
+            self.gff,
+        )
+        with self._ow(self.out) as _fh:
+            # _fh: Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
+            for chrom in chroms:
+                logger.info("%s: parsing gene and feature data", chrom)
+                self._feats: List[Dict] = gff3_pa.filter(
+                    pa.compute.field("seqname") == chrom
+                ).to_pylist()
+                # generate dependancy
+                self._gene_feature_dependancy()
+                logger.info(
+                    "%s: found %s intervals (genes + features)",
+                    chrom,
+                    f"{len(self._gene_tree):,}",
                 )
+                # reset chrom intervals
+                if self.split_intron:
+                    self._chrom_intervals = ChromInterval(strands)
+                # parse features
+                self._parse_gene_features(feature_type=feature_type)
+                # sort features and filter intervals
+                self._sort_n_filter_intervals()
+                # now write to file
+                self._write(_fh, chrom)
+
+    def _read_gff3(self):
+        """_read_gff3 gff3 reader
+        Read GFF3 file using pyarrow
+        Returns:
+            pyarrow Table
+        """
+        gff3_reader = pr.Reader(self.gff)
+        return gff3_reader.gff().drop_columns(["source", "score", "frame"])
 
     def _gene_feature_dependancy(self) -> None:
-        """_gene_feature_dependancy
+        """_gene_feature_dependancy generate gene feature dependancy per chromosome
         Helper function.
-        Parse gff3 file and generate gene dependancy graph using networkx
+        generate gene dependancy graph using networkx per chromosome features
         all nodes in this graph with in_degree 0 should be all genes and
         all nodes with out_degree 0 should be all gene features
-        reverse map each feature with 0 out_degree node to its corresponding gene
-        Args:
-            None
         """
-        logger.info("Generating gene feature dependancy from %s", self.gff)
-        for feat in self._gff3_reader():
-            # self._feature_names.add(feat.ftype)  # add feature names
-            attribs = dict(re.findall(self._gffre, feat.attribs))
-            if self.parent_id not in attribs:
-                continue
+        # clear the dict first
+        self._gene_tree = {}
+        for f in self._feats:
+            attribs: Dict[str, str] = dict(re.findall(self._gffre, f["attributes"]))
             if self.idx_id in attribs:
                 uid: str = attribs[self.idx_id]
             else:
-                # use position as unique id if idx attrib is not found
-                # chromosome|begin|end|strand
+                # use position as unique id if ID attribute is not found
+                # format: chromosome|begin|end|strand
                 uid: str = self._uid.substitute(
-                    chrom=feat.chrom, begin=feat.begin, end=feat.end, strand=feat.strand
+                    chrom=f["seqname"],
+                    start=str(f["start"]),
+                    end=str(f["end"]),
+                    strand=f["strand"],
                 )
-            self._gene_graph.add_edge(attribs[self.parent_id], uid)
-        if len(self._gene_graph) == 0:
-            raise RuntimeWarning(
-                f"Cannot parse gene and features from {self.gff}. Check your input file!"
-            )
+            if uid not in self._gene_tree:
+                self._gene_tree[uid] = Node(uid)
+            if self.parent_id not in attribs:
+                continue
+            self._gene_tree[uid].add_parent(attribs[self.parent_id])
+            if attribs[self.parent_id] not in self._gene_tree:
+                self._gene_tree[attribs[self.parent_id]] = Node(attribs[self.parent_id])
+            self._gene_tree[attribs[self.parent_id]].add_child(uid)
 
     def _parse_gene_features(self, feature_type: str = "exon") -> None:
-        """_parse_gene_features parse gene features
-        Helper function, parse gff3 file for the given feature type
+        """_parse_gene_features parse gene features per chromosome
+        Helper function, parse gene features given gene_graph dependency graph and
+        list of features
         Args:
+            gene_graph: DiGraph object, gene - feature dependancy per chromosome
+            feats: List[Dict] feature list
             feature_type: str, gff3 third column feature to parse. Defaults to "exon".
+
+        Returns:
+            Dict[str, Gene]
         """
-        # feature type checker for gene like features
-        logger.info("Parsing gene and %s features from %s", feature_type, self.gff)
+
+        self._gene_feature_map = {}
         feature_checker = self._get_feature_type_checker()
-        for feat in self._gff3_reader():
+        for f in self._feats:
+            start = f["start"] - 1  # to 0 based format
+            attribs = dict(re.findall(self._gffre, f["attributes"]))
             try:
-                begin, end = self._get_coordinates(feat.begin, feat.end)
-            except ValueError as vf:
-                logging.warning("%s, skipping feature", str(vf))
-                continue
-            attribs = dict(re.findall(self._gffre, feat.attribs))
-            try:
-                idx = attribs[self.idx_id]
+                uid: str = attribs[self.idx_id]
             except KeyError:
-                idx = self._uid.substitute(
-                    chrom=feat.chrom, begin=feat.begin, end=feat.end, strand=feat.strand
+                uid: str = self._uid.substitute(
+                    chrom=f["seqname"],
+                    start=str(f["start"]),
+                    end=str(f["end"]),
+                    strand=f["strand"],
                 )
-            gene_like_feature = feature_checker(feat.ftype)
+            gene_like_feature: bool = feature_checker(f["type"])
             # what all to keep ?
-            if (feat.ftype == feature_type) and self.is_leaf_node(idx):
-                # this is a feature type and is a leaf node, keep it
-                genes = self._get_genes(idx)
+            if (f["type"] == feature_type) and self._is_leaf(uid):
+                genes: Set[str] = get_genes(self._gene_tree, uid)
                 if len(genes) == 0:
                     logging.warning(
-                        "Cannot find 'gene' for feature %s--> %s:%s-%s(%s) with attributes %s! Skipping",
-                        feat.ftype,
-                        feat.chrom,
-                        feat.begin,
-                        feat.end,
-                        feat.strand,
-                        feat.attribs,
+                        "Cannot find 'gene' for feature %s--> %s:%i-%i(%s) with attributes %s! Skipping",
+                        f["type"],
+                        f["seqname"],
+                        f["start"],
+                        f["end"],
+                        f["strand"],
+                        f["attributes"],
                     )
                     continue
                 for g in genes:
-                    try:
-                        self._gene_feature_map[g].add_feature(feat.ftype, begin, end)
-                    except KeyError:
+                    if g not in self._gene_feature_map:
                         self._gene_feature_map[g] = Gene()
-                        self._gene_feature_map[g].add_feature(feat.ftype, begin, end)
-            elif (self._is_parent_node(idx)) or (
-                gene_like_feature and (idx not in self._gene_graph)
+                    self._gene_feature_map[g].add_feature(f["type"], start, f["end"])
+                # add feature intervals to chromosome, strand
+                self._chrom_appender(f["strand"], start, f["end"])
+            elif (self._is_parent(uid)) or (
+                gene_like_feature and self._is_singleton(uid)
             ):
                 # either a gene or
                 # a gene like feature with id not found in the gene dependanch graph
-                self._add_gene_info(feat.chrom, begin, end, feat.strand, attribs)
-
-    def _get_coordinates(self, sbegin: str, send: str) -> Tuple[int, int]:
-        """_get_coordinates
-        Return co-ordinates as integers, convert begin position to 0 based system
-        Args:
-            sbegin: begin position as a string
-            send: end position as a string
-
-        Raises:
-            ValueError: raise if begin position cannot be converted to integer
-            ValueError: raise if end position cannot be converted to integer
-
-        Returns:
-            Tuple[int,int] begin and end co-ordinates as a tuple
-        """
-        try:
-            # convert from 1 based co-ordinate system to 0 based for BED
-            begin = int(sbegin) - 1
-        except ValueError as v:
-            raise ValueError(
-                f"Cannot parse feature begin position from {sbegin}, {v}"
-            ) from v
-        try:
-            end = int(send)
-        except ValueError as v:
-            raise ValueError(
-                f"Cannot parse feature end position from {send}, {v}"
-            ) from v
-        return (begin, end)
+                self._add_gene_info(f["seqname"], start, f["end"], f["strand"], attribs)
+                if gene_like_feature:
+                    # add feature intervals to chromosome, strand
+                    self._chrom_appender(f["strand"], start, f["end"])
 
     def _get_feature_type_checker(self) -> Callable:
         """_get_feature_type_checker
@@ -258,8 +282,8 @@ class GFF3parser:
             return no_gene_like_feature
         return check_gene_like_feature
 
-    def is_leaf_node(self, idx: str) -> bool:
-        """is_leaf_node
+    def _is_leaf(self, idx: str) -> bool:
+        """is_leaf
         Helper function
         Check whether a given node is a leaf node
         Args:
@@ -268,16 +292,12 @@ class GFF3parser:
         Returns:
             boolean
         """
-        if idx not in self._gene_graph:
+        if idx not in self._gene_tree:
             return False
-        in_degree = self._gene_graph.in_degree(idx)
-        out_degree = self._gene_graph.out_degree(idx)
-        if in_degree > 0 and out_degree == 0:
-            return True
-        return False
+        return self._gene_tree[idx].is_leaf and not self._gene_tree[idx].is_singleton
 
-    def _is_parent_node(self, idx: str) -> bool:
-        """is_parent_node
+    def _is_parent(self, idx: str) -> bool:
+        """is_parent
         Helper function
         Check whether the given node is a parent node
         Args:
@@ -286,33 +306,26 @@ class GFF3parser:
         Returns:
             boolean
         """
-        if idx not in self._gene_graph:
+        if idx not in self._gene_tree:
             return False
-        in_degree = self._gene_graph.in_degree(idx)
-        out_degree = self._gene_graph.out_degree(idx)
-        if in_degree == 0 and out_degree > 0:
-            return True
-        return False
+        return self._gene_tree[idx].is_root and not self._gene_tree[idx].is_singleton
 
-    def _get_genes(self, idx: str) -> Set[str]:
-        """_get_genes
+    def _is_singleton(self, idx: str) -> bool:
+        """is_singleton
         Helper function
-        Get all the gene ancestors of the given node.
-        Gene ancestors are the parent nodes with out_degree == 0
+        Check whether the given node is a singleton node
         Args:
-            idx: str, node id, unique id from GFF3
+            idx: str, unique id of the feature
 
         Returns:
-            Set[str], unique ids of all gene ancestors of this node
+            boolean
         """
-        genes = set()
-        for anc in ancestors(self._gene_graph, idx):
-            if self._gene_graph.in_degree(anc) == 0:
-                genes.add(anc)
-        return genes
+        if idx not in self._gene_tree:
+            return False
+        return self._gene_tree[idx].is_singleton
 
     def _add_gene_info(
-        self, chrom: str, begin: int, end: int, strand: str, attribs: Dict[str, str]
+        self, chrom: str, start: int, end: int, strand: str, attribs: Dict[str, str]
     ) -> None:
         """_add_gene_info add gene info
         Helper function, add gene info to self._gene_feature_map dictionary
@@ -341,7 +354,7 @@ class GFF3parser:
             attribs, self.gene_type, "unknown"
         )
         self._gene_feature_map[idx].chrom = chrom
-        self._gene_feature_map[idx].begin = begin
+        self._gene_feature_map[idx].start = start
         self._gene_feature_map[idx].end = end
         self._gene_feature_map[idx].strand = strand
 
@@ -364,75 +377,55 @@ class GFF3parser:
         except KeyError:
             return default
 
-    def _sort_n_write(self) -> None:
-        """_sort_n_write sort gene features and write to file
-        Helper function, sort the gene features based on chromsom, begin co-ordinate and write to self.out
+    def _sort_n_filter_intervals(self) -> None:
+        """_sort_coordinates sort co-ordinates
+        Helper function
+        Add features to heap to sort
         """
-        # Template for the name column in final bed format
-        name_col = Template(
-            "${idx}@${name}@${gtype}@${feat}@${ix}/${alln}@${idx}:${feat}${padix}"
-        )
-        # output writer function
-        ow = output_writer(self.out, use_tabix=self.use_tabix, preset="bed")
-        # keep sorted features
-        chrom_sorted = {}
+        introns: List[Feature] = []
+        nexons: int = 0
+        nintrons: int = 0
+        one_exon: int = 0
+        # fill strand intervals
         for dat in self._gene_feature_map.values():
-            if dat.chrom not in chrom_sorted:
-                chrom_sorted[dat.chrom] = []
-            gene_id = dat.gene_id
-            gene_name = dat.gene_name
-            gene_type = dat.gene_type
-            strand = dat.strand
-            for (
-                begin,
-                end,
-                ftype,
-                ix,
-                alln,
-            ) in dat.merge_overlapping_exons_add_introns_add_tags():
-                heapq.heappush(
-                    chrom_sorted[dat.chrom],
-                    (
-                        begin,
-                        end,
-                        name_col.substitute(
-                            idx=gene_id,
-                            name=gene_name,
-                            gtype=gene_type,
-                            feat=ftype,
-                            ix=ix,
-                            alln=alln,
-                            padix=f"{ix:04}",
-                        ),
-                        strand,
-                    ),
+            tagged_exons: List[Feature] = dat.tagged_exons()
+            for exon in tagged_exons:
+                self._heap.add(exon)
+            nexons += len(tagged_exons)
+            if len(tagged_exons) == 1:
+                one_exon += 1
+                continue
+            elif self.split_intron and self._chrom_intervals.strand_len(dat.strand) > 0:
+                overlaps: Interval = self._chrom_intervals.find_overlaps(
+                    dat.strand, dat.exon_start, dat.exon_end
                 )
-        with ow(self.out) as _fh:
-            for chrom in sorted(chrom_sorted.keys()):
-                while True:
-                    try:
-                        (begin, end, name, strand) = heapq.heappop(chrom_sorted[chrom])
-                        _fh.write(f"{chrom}\t{begin}\t{end}\t{name}\t0\t{strand}\n")
-                    except IndexError:
-                        _fh.flush()
-                        break
+                introns = dat.remove_exon_overlapping_intron(overlaps)
+            else:
+                introns = dat.tagged_introns()
+            nintrons += len(introns)
+            for intron in introns:
+                self._heap.add(intron)
+        logger.info(
+            "# Genes: %s, Exons: %s, Introns: %s",
+            f"{len(self._gene_feature_map):,}",
+            f"{nexons:,}",
+            f"{nintrons:,}",
+        )
+        logger.info("# Genes with single feature or no features: %s", f"{one_exon:,}")
 
-
-# def print_stuff(gff3: GFF3parser) -> None:
-#     for idx, dat in gff3._gene_feature_map.items():
-#         print(
-#             idx,
-#             dat.chrom,
-#             dat.begin,
-#             dat.end,
-#             dat.strand,
-#             dat.gene_id,
-#             dat.gene_name,
-#             dat.gene_type,
-#         )
-#         print(dat.features)
-#         print(dat.merge_overlapping_exons_add_introns_add_tags())
-#     print(len(gff3._gene_feature_map))
+    def _write(self, fh, chrom: str) -> None:
+        """_write write to file
+        Pop items from the list and write to the file handle
+        Args:
+            fh: file handle, Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
+            chrom: chromosome name
+        """
+        for feature in self._heap:
+            fh.write(
+                f"{chrom}\t{feature.chromStart}\t{feature.chromEnd}\t{feature.name}\t{feature.score}\t{feature.strand}\n"
+            )
+        # clear heap
+        self._heap = SortedList()
 
 
 # import sys
@@ -440,30 +433,29 @@ class GFF3parser:
 
 # def main():
 #     root = logging.getLogger()
-#     root.setLevel(logging.DEBUG)
+#     root.setLevel(logging.INFO)
 
 #     handler = logging.StreamHandler(sys.stdout)
-#     handler.setLevel(logging.DEBUG)
+#     handler.setLevel(logging.INFO)
 #     root.addHandler(handler)
 
-# gencode = GFF3parser(
-#     gff="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
-#     out="/workspaces/clip_savvy/test_data/gencode.v42.annotation.plus.tRNAs.bed",
-#     parent_id="Parent",
-#     idx_id="ID",
-#     gene_name="gene_name",
-#     gene_id="gene_id",
-#     gene_type="gene_type",
-#     gene_like_features=set(["tRNA"]),
-#     use_tabix=False,
-# )
-# gencode.process()
-
-#     # print_stuff(gencode)
+#     gencode = GFF3parser(
+#         gff="/workspaces/clip_savvy/test_data/gff3/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
+#         out="/workspaces/clip_savvy/test_data/baseline.gencode.v42.bed",
+#         parent_id="Parent",
+#         idx_id="ID",
+#         gene_name="gene_name",
+#         gene_id="gene_id",
+#         gene_type="gene_type",
+#         gene_like_features=set(["tRNA"]),
+#         use_tabix=False,
+#         split_intron=False,
+#     )
+#     gencode.process()
 
 # ensembl = GFF3parser(
-#     gff="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.111.gff3.gz",
-#     out="/workspaces/clip_savvy/test_data/Mus_musculus.GRCm39.test_tabix.bed.gz",
+#     gff="/workspaces/clip_savvy/test_data/gff3/Mus_musculus.GRCm39.111.gff3.gz",
+#     out="/workspaces/clip_savvy/test_data/gene_tree.Mus_musculus.GRCm39.bed.gz",
 #     parent_id="Parent",
 #     idx_id="ID",
 #     gene_name="Name",
@@ -471,25 +463,10 @@ class GFF3parser:
 #     gene_type="biotype",
 #     gene_like_features=None,
 #     use_tabix=True,
+#     split_intron=False,
 # )
 # ensembl.process()
-# print_stuff(ensembl)
 
 
-#     # ncbi = GFF3parser(
-#     #     gff="/workspaces/clip_savvy/test_data/GCA_000001405.29_GRCh38.p14_genomic.gff.gz",
-#     #     out="blah",
-#     #     parent_id="Parent",
-#     #     idx_id="ID",
-#     #     gene_name="Name",
-#     #     gene_id="Dbxref",
-#     #     gene_type="gene_biotype",
-#     #     gene_like_features=None,
-#     # )
-#     # ncbi.process()
-#     # print_stuff(ncbi)
-#     # print(ncbi._gene_feature_map["gene-ND1"].features)
-
-
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
