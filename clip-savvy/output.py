@@ -5,9 +5,8 @@ from functools import partial
 from pathlib import Path
 from shutil import copyfileobj
 from typing import Callable, Dict, Generator, Optional, Set
-
+from gzip import open as gzopen
 from pysam import tabix_compress, tabix_index
-from xopen import xopen
 
 logger = logging.getLogger(__file__)
 
@@ -27,21 +26,21 @@ def output_writer(out: str, use_tabix: bool, preset: str) -> Callable:
     Returns:
         Callable, appropriate file writer
     """
-    tabix_suffix: Set[str] = set([".gz", ".gzip", ".bgz", ".bgzip"])
-    xopen_suffix: Set[str] = set([".gz", ".bz2", ".xz"])
+    tb_suffix: Set[str] = set([".gz", ".gzip", ".bgz", ".bgzip"])
+    gz_suffix: Set[str] = set([".gz", ".gzip"])
     out_suffix = Path(out).suffix.lower()
     if Path(out).exists():
         logging.warning("Re-writing file %s", out)
-    if use_tabix and (out_suffix not in tabix_suffix):
+    if use_tabix and (out_suffix not in tb_suffix):
         raise NotImplementedError(
             f"Cannot use tabix index with {out_suffix} for output file {out}"
         )
-    if out_suffix in tabix_suffix and use_tabix:
+    if out_suffix in tb_suffix and use_tabix:
         logger.info("%s format: bgzip, create tabix index: True", out)
         return partial(tabix_writer, preset=preset)
-    elif out_suffix in xopen_suffix:
+    elif out_suffix in gz_suffix:
         logger.info("%s format: %s", out, out_suffix)
-        return partial(xopen, mode="wt", compresslevel=None)
+        return partial(gzopen, mode="wt")
     else:
         logger.info("%s format: plain text", out)
         return partial(open, mode="w")
@@ -95,8 +94,8 @@ def tabix_accumulator(
         tmpsw.flush()
         logger.info("Writing bgzip file %s from temp file %s", file_name, tmpsw.name)
         tabix_compress(tmpsw.name, file_name, force=True)
-    logger.info("Indexing bgzip file %s", file_name)
-    tabix_index(file_name, force=True, preset=preset)  # type: ignore
+        logger.info("Indexing bgzip file %s", file_name)
+        tabix_index(file_name, force=True, preset=preset)  # type: ignore
 
 
 def general_accumulator(temp_files: Dict[str, str], file_name: str) -> None:
