@@ -175,10 +175,33 @@ class Interval(SortedList):
     def islice(
         self, istart: Optional[int] = None, istop: Optional[int] = None
     ) -> "Interval":
+        """islice _summary_
+        override the SortedList.islice method to return an Interval object
+        Args:
+            istart: start index. Defaults to None.
+            istop: end index. Defaults to None.
+
+        Returns:
+            Interval object
+        """
         sliced: Interval = Interval()
         for start, end in super().islice(start=istart, stop=istop, reverse=False):
             sliced.add(start, end)
         return sliced
+
+    def get_overlaps(self, start: int, end: int) -> "Interval":
+        """get_overlaps
+        Given a start and end position, return the overlapping intervals
+        Args:
+            start: int, interval start
+            end: int, interval end
+
+        Returns:
+            Interval object
+        """
+        start_pos = bisect_right(self, start, key=itemgetter(1))
+        end_pos = bisect_left(self, end, lo=start_pos, key=itemgetter(0))
+        return self.islice(start_pos, end_pos)
 
     def __and__(self, other: "Interval") -> "Interval":
         if not isinstance(other, Interval):
