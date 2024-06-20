@@ -441,7 +441,7 @@ class GFF3parser:
 
 #     gencode = GFF3parser(
 #         gff="/workspaces/clip_savvy/test_data/gff3/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
-#         out="/workspaces/clip_savvy/test_data/baseline.gencode.v42.bed",
+#         out="/workspaces/clip_savvy/test_data/baseline.gencode.v42.plain.gz",
 #         parent_id="Parent",
 #         idx_id="ID",
 #         gene_name="gene_name",
@@ -452,6 +452,7 @@ class GFF3parser:
 #         split_intron=False,
 #     )
 #     gencode.process()
+
 
 # ensembl = GFF3parser(
 #     gff="/workspaces/clip_savvy/test_data/gff3/Mus_musculus.GRCm39.111.gff3.gz",
@@ -468,5 +469,5 @@ class GFF3parser:
 # ensembl.process()
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
