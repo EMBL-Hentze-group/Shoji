@@ -5,4 +5,5 @@ poetry
 pysam
 xopen
 pyarrow
+sortedcontainers
 
