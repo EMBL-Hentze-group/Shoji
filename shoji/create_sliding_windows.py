@@ -1,7 +1,6 @@
 import logging
 import multiprocessing as mp
 import tempfile
-from os import cpu_count
 from pathlib import Path
 from shutil import rmtree
 from typing import Dict, List, Tuple
@@ -13,6 +12,7 @@ from sortedcontainers import SortedList
 # import pyarrow_reader as pr
 # from output import general_accumulator, output_writer, tabix_accumulator
 
+from .helpers import set_cores
 from . import pyarrow_reader as pr
 from .output import general_accumulator, output_writer, tabix_accumulator
 
@@ -32,42 +32,17 @@ class SlidingWindows:
     ) -> None:
         self.annotation = annotation
         self.out = out
-        self.cores = cores
+        self.cores = set_cores(cores)
         self._temp_dir = tempfile.mkdtemp(dir=Path(out).parent)
         logger.debug("Temp. dir %s", self._temp_dir)
 
     def __enter__(self) -> "SlidingWindows":
-        self._set_cores()
         return self
 
     def __exit__(self, except_type, except_val, except_traceback):
         rmtree(self._temp_dir)  # clean up temp dir
         if except_type:
             logging.exception(except_val)
-
-    def _set_cores(self) -> None:
-        """_set_cores Helper function
-        Sanity check self.cores and total number of cores available,
-        reset number of available cores if self.cores > total cores
-        """
-        allcores = cpu_count()
-        if (self.cores > allcores) and (allcores > 1):  # type: ignore
-            setcores = max(allcores - 1, 1)  # type: ignore
-            logger.warning(
-                "Give number of cores %i > number of cores detected %i. Setting cores to %i",
-                self.cores,
-                allcores,
-                setcores,
-            )
-            self.cores = setcores
-        elif allcores == 1:
-            logger.warning(
-                "Available # cores: 1, resetting cores parameter from %i to 1",
-                self.cores,
-            )
-            self.cores = 1
-        else:
-            logger.info("Using %i cores out of %i...", self.cores, allcores)
 
     def generate_sliding_windows(self, step: int, size: int, use_tabix: bool) -> None:
         if self._check_tabix():
