@@ -6,4 +6,5 @@ pysam
 xopen
 pyarrow
 sortedcontainers
+click
 
