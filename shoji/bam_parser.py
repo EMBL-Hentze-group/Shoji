@@ -139,7 +139,7 @@ def extract_single_site(
         primary: bool, flag to extract only primary alignments
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
     """
-    extract_fn = _pos_ops(site)
+    extract_fn = _site_ops(site)
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -157,7 +157,7 @@ def extract_single_site(
             start, end = extract_fn(aln, offset)
             strand: str = "-" if aln.is_reverse else "+"
             try:
-                yb: int = aln.get_tag("YB")
+                yb = aln.get_tag("YB")
             except KeyError:
                 yb = 1
             positions.add(
@@ -180,7 +180,7 @@ def extract_multiple_sites(
     primary: bool,
     ignore_PCR: bool,
 ) -> None:
-    extract_fn = _pos_ops(site)
+    extract_fn = _site_ops(site)
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -197,7 +197,7 @@ def extract_multiple_sites(
                 continue
             strand: str = "-" if aln.is_reverse else "+"
             try:
-                yb: int = aln.get_tag("YB")
+                yb = aln.get_tag("YB")
             except KeyError:
                 yb = 1
             pos_list: List[Tuple[int, int]] = extract_fn(aln)
@@ -355,12 +355,12 @@ def _deletion(aln: pysam.AlignedSegment) -> List[Tuple[int, int]]:
     Returns:
         List[Tuple[int, int]], List of deletion points (start, end)
     """
-    cigars: Set[int] = set([x[0] for x in aln.cigartuples])
+    cigars: Set[int] = set([x[0] for x in aln.cigartuples])  # type: ignore
     if 2 not in cigars:
         # https://pysam.readthedocs.io/en/latest/api.html#pysam.AlignedSegment.get_cigar_stats
         # No deletion found
         return []
-    return _insertion_deletion_points(aln.cigartuples, aln.get_aligned_pairs(), 2)
+    return _insertion_deletion_points(aln.cigartuples, aln.get_aligned_pairs(), 2)  # type: ignore
 
 
 def _insertion_deletion_points(
@@ -385,11 +385,11 @@ def _insertion_deletion_points(
             continue
         start_index = np.min(ops_index) - 1
         end_index = np.max(ops_index) + 1
-        ops_locations.append((cigar_ref[start_index, 1], cigar_ref[end_index, 1]))
+        ops_locations.append((cigar_ref[start_index, 1], cigar_ref[end_index, 1]))  # type: ignore
     return ops_locations
 
 
-def _pos_ops(site: str) -> Callable:
+def _site_ops(site: str) -> Callable:
     """_pos_ops Helper function
     Return the appropriate function based on the choice of crosslink site
     Args:
@@ -417,7 +417,9 @@ def _pos_ops(site: str) -> Callable:
 
 
 def _tmp_output_writer(
-    output: str, chrom: str, positions: SortedList,
+    output: str,
+    chrom: str,
+    positions: SortedList,
 ) -> None:
     """_tmp_output_writer Helper function
     Write extracted crosslink sites to a temporary file
@@ -427,9 +429,45 @@ def _tmp_output_writer(
         chrom: str, chromosome name
         positions: SortedList, crosslink site details
     """
-    owriter = output_writer(output, use_tabix=False preset="bed")
+    owriter = output_writer(output, use_tabix=False, preset="bed")
     with owriter(output) as _ow:
         for spos in positions:
             _ow.write(
                 f"{chrom}\t{spos[0]}\t{spos[1]}\t{spos[2]}\t{spos[3]}\t{spos[4]}\n"
             )
+
+
+# def chen_fox_lyndon_factorization(s):
+#     n = len(s)  # length of the string
+#     i = 0  # start of the string
+#     factorization = []  # list to store the factorization
+#     while i < n:  # iterate over the string
+#         j, k = (
+#             i + 1,
+#             i,
+#         )  # j is the next character index, k is the current character index
+#         while (
+#             j < n and s[k] <= s[j]
+#         ):  # while j is less than length of the string and current character is less than or equal to next character
+#             if s[k] < s[j]:  # if current character is less than next character
+#                 print(k, s[k], j, s[j], "current character < next character, k=", k)
+#                 k = i  # set k to i
+#             else:
+#                 print(
+#                     k,
+#                     s[k],
+#                     j,
+#                     s[j],
+#                     "current character == next character, so k=",
+#                     k + 1,
+#                 )
+#                 k += 1  # else increment k by 1
+#             j += 1  # increment j by 1
+#             print(f"while j<{len(s)} j=", j)
+#             # print("i=", i, "j=", j, "k=", k)
+#         while i <= k:
+#             print("i=", i, "j=", j, "k=", k)
+#             factorization.append(s[i : i + j - k])
+#             i += j - k
+#     assert "".join(factorization) == s
+#     return factorization
