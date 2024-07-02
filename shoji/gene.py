@@ -1,8 +1,7 @@
 from typing import Dict, List, Tuple, Optional, NamedTuple
 from bisect import bisect_left, bisect_right
 
-# from .interval2 import Interval
-from interval import Interval
+from .interval import Interval
 
 import logging
 

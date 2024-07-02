@@ -1,6 +1,4 @@
-from interval import Interval
-
-# from .interval import Interval
+from .interval import Interval
 from typing import Optional, List, Dict
 from bisect import bisect_left, bisect_right
 

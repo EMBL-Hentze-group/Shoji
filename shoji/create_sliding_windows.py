@@ -9,11 +9,8 @@ import pysam
 from pyarrow.dataset import ParquetFileFragment
 from sortedcontainers import SortedList
 
-# import pyarrow_reader as pr
-# from output import general_accumulator, output_writer, tabix_accumulator
-
-from .helpers import set_cores
 from . import pyarrow_reader as pr
+from .helpers import set_cores
 from .output import general_accumulator, output_writer, tabix_accumulator
 
 logger = logging.getLogger(__name__)
@@ -232,13 +229,15 @@ def _sliding_windows(
 #     handler = logging.StreamHandler(sys.stdout)
 #     handler.setLevel(logging.DEBUG)
 #     root.addHandler(handler)
-#     tabix_bed = "/workspaces/clip_savvy/test_data/baseline.gencode.v42.tabix.gz"
+#     tabix_bed = (
+#         "/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.split_introns.bed.gz"
+#     )
 #     window = 100
 #     step = 20
-#     tabix_sw = f"/workspaces/clip_savvy/test_data/mp_tabix2plain.{window}_{step}.bed"
+#     tabix_sw = f"/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.split_introns.{window}_{step}.bed.gz"
 #     # sw_tabix = SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6)
 #     with SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6) as swx:
-#         swx.generate_sliding_windows(step=step, size=window, use_tabix=False)
+#         swx.generate_sliding_windows(step=step, size=window, use_tabix=True)
 #     # sw_tabix.generate_sliding_windows()
 
 

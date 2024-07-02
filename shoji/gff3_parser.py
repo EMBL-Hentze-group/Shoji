@@ -4,20 +4,12 @@ from string import Template
 from typing import Callable, Dict, List, Optional, Set
 
 import pyarrow as pa
-import pyarrow_reader as pr
-from chrom_interval import ChromInterval
-from gene import Feature, Gene
-from interval import Interval
-from output import output_writer
-from sortedcontainers import SortedList
-from tree import Node, get_genes
-
-# from . import pyarrow_reader as pr
-# from .gene import Gene, Feature
-# from .chrom_intervals import ChromInterval
-# from .output import output_writer
-# from .interval import Interval
-# from .tree import Node, get_genes
+from . import pyarrow_reader as pr
+from .chrom_interval import ChromInterval
+from .gene import Feature, Gene
+from .interval import Interval
+from .output import output_writer
+from .tree import Node, get_genes
 
 logger = logging.getLogger(__file__)
 
@@ -438,6 +430,33 @@ class GFF3parser:
 #     handler = logging.StreamHandler(sys.stdout)
 #     handler.setLevel(logging.INFO)
 #     root.addHandler(handler)
+# default = GFF3parser(
+#     gff="/workspaces/Shoji/test_data/gencode.v42.annotation.plus.tRNAs.rRNAs.sorted.gff3",
+#     out="/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.bed.gz",
+#     parent_id="Parent",
+#     idx_id="ID",
+#     gene_name="gene_name",
+#     gene_id="gene_id",
+#     gene_type="gene_type",
+#     gene_like_features=set(["tRNA", "rRNA"]),
+#     use_tabix=True,
+#     split_intron=False,
+# )
+# default.process()
+# isplit = GFF3parser(
+#     gff="/workspaces/Shoji/test_data/gencode.v42.annotation.plus.tRNAs.rRNAs.sorted.gff3",
+#     out="/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.split_introns.bed.gz",
+#     parent_id="Parent",
+#     idx_id="ID",
+#     gene_name="gene_name",
+#     gene_id="gene_id",
+#     gene_type="gene_type",
+#     gene_like_features=set(["tRNA", "rRNA"]),
+#     use_tabix=True,
+#     split_intron=True,
+# )
+# isplit.process()
+
 
 #     gencode = GFF3parser(
 #         gff="/workspaces/clip_savvy/test_data/gff3/gencode.v42.annotation.plus.tRNAs.sorted.gff3",
