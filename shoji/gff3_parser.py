@@ -2,6 +2,7 @@ import logging
 import re
 from string import Template
 from typing import Callable, Dict, List, Optional, Set
+from sortedcontainers import SortedList
 
 import pyarrow as pa
 from . import pyarrow_reader as pr
