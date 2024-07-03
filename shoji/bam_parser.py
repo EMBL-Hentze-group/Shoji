@@ -1,10 +1,12 @@
 import logging
+import multiprocessing as mp
 import tempfile
 from decimal import ROUND_HALF_UP, Decimal
+from functools import partial
 from itertools import chain
 from pathlib import Path
 from shutil import rmtree
-from typing import Callable, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pysam
@@ -24,7 +26,7 @@ class BamParser:
     def __init__(
         self,
         bam: str,
-        output: str,
+        out: str,
         use_tabix: bool,
         cores: int,
         tmp_dir: Optional[str] = None,
@@ -33,24 +35,27 @@ class BamParser:
 
         Args:
             bam: bam file to parse. Must be co-ordinate sorted and indexed
-            output: Output file name (bed format)
+            out: Output file name (bed format)
             use_tabix: boolean, if True, use tabix to index the output file
             cores: int, number of cores to use
             tmp_dir: Tmp. directory to store intermediate outputs. Defaults to None.
         """
         self.bam: str = bam
-        self.output: str = output
+        self.out: str = out
         self.use_tabix: bool = use_tabix
+        # check if the output file suffix is in the list of tabix supported formats
+        self._check_suffix()
         self.cores: int = set_cores(cores)
         if tmp_dir is None:
-            self.tmp: Path = Path(self.output).parent / next(
+            self._tmp: Path = Path(self.out).parent / next(
                 tempfile._get_candidate_names()
             )
         else:
             if not Path(tmp_dir).exists():
                 raise FileNotFoundError(f"Directory {tmp_dir} does not exist")
-            self.tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
-        logger.info("Using %s as temp. directory", str(self.tmp))
+            self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
+        self._tmp.mkdir(parents=True, exist_ok=True)
+        logger.info("Using %s as temp. directory", str(self._tmp))
         # list of chromosomes in the bam file
         self._chroms: List[str] = self._get_chromosomes()
         logger.info("Found %i chromosomes in %s", len(self._chroms), self.bam)
@@ -59,9 +64,23 @@ class BamParser:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        rmtree(self.tmp)  # clean up
+        rmtree(self._tmp)  # clean up
         if exc_type:
             logger.exception(traceback)
+
+    def _check_suffix(self) -> None:
+        """_check_suffix
+        Helper function
+        If the suffix of the output file is not in the list of tabix supported formats, raise an error
+        Raises:
+            NotImplementedError: _description_
+        """
+        tb_suffix: Set[str] = set([".gz", ".gzip", ".bgz", ".bgzip"])
+        out_suffix = Path(self.out).suffix.lower()
+        if self.use_tabix and (out_suffix not in tb_suffix):
+            raise NotImplementedError(
+                f"Cannot use tabix index with '{out_suffix}' suffix for output file {self.out}"
+            )
 
     def _get_chromosomes(self) -> List[str]:
         """_get_chromosomes Helper function
@@ -104,14 +123,71 @@ class BamParser:
             primary: bool, Flag to extract only primary alignments
             ignore_PCR: bool, Flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
         """
-        pass
+        extract_fn: Callable = self._site_ops(site)
+        suffix: str = Path(self.out).suffix
+        if self.use_tabix:
+            suffix = ".bed"
+        temp_dict: Dict[str, str] = {}
+        for chrom in self._chroms:
+            temp_dict[chrom] = str(
+                self._tmp / f"{next(tempfile._get_candidate_names())}{suffix}"
+            )
+        with mp.Pool(self.cores) as pool:
+            for chrom, temp_file in temp_dict.items():
+                pool.apply_async(
+                    extract_fn,
+                    args=(
+                        self.bam,
+                        chrom,
+                        temp_file,
+                        mate,
+                        offset,
+                        min_qual,
+                        min_len,
+                        max_len,
+                        max_interval_len,
+                        primary,
+                        ignore_PCR,
+                    ),
+                )
+            pool.close()
+            pool.join()
+        if self.use_tabix:
+            tabix_accumulator(temp_dict, str(self._tmp), self.out, "bed")
+        else:
+            general_accumulator(temp_dict, self.out)
+
+    def _site_ops(self, site: str) -> Callable:
+        """_pos_ops Helper function
+        Return the appropriate function based on the choice of crosslink site
+        Args:
+            site: str, one of ["s", "i", "d", "m", "e"]
+
+        Raises:
+            NotImplementedError: If site is not one of ["s", "i", "d", "m", "e"]
+
+        Returns:
+            Callable, appropriate function based on the site
+        """
+        sites: Set[str] = {"s", "i", "d", "m", "e"}
+        if site not in sites:
+            raise NotImplementedError(f"Site must be one of {sites}, but found {site}")
+        if site == "s":
+            return partial(extract_single_site, extract_fn=_start)
+        elif site == "e":
+            return partial(extract_single_site, extract_fn=_end)
+        elif site == "m":
+            return partial(extract_single_site, extract_fn=_middle)
+        elif site == "i":
+            return partial(extract_multiple_sites, extract_fn=_insertion)
+        else:
+            return partial(extract_multiple_sites, extract_fn=_deletion)
 
 
 def extract_single_site(
     bam: str,
     chrom: str,
     output: str,
-    site: str,
     mate: int,
     offset: int,
     min_qual: int,
@@ -120,6 +196,7 @@ def extract_single_site(
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
+    extract_fn: Callable,
 ) -> None:
     """extract_single_site
     Extract one crosslink site/event per read.
@@ -138,8 +215,8 @@ def extract_single_site(
         max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
         primary: bool, flag to extract only primary alignments
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
+        extract_fn: Callable, function to extract appropriate crosslink event
     """
-    extract_fn = _site_ops(site)
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -155,6 +232,8 @@ def extract_single_site(
             ):
                 continue
             start, end = extract_fn(aln, offset)
+            if start < 0:
+                continue
             strand: str = "-" if aln.is_reverse else "+"
             try:
                 yb = aln.get_tag("YB")
@@ -170,7 +249,6 @@ def extract_multiple_sites(
     bam: str,
     chrom: str,
     output: str,
-    site: str,
     mate: int,
     offset: int,
     min_qual: int,
@@ -179,8 +257,25 @@ def extract_multiple_sites(
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
+    extract_fn: Callable,
 ) -> None:
-    extract_fn = _site_ops(site)
+    """extract_multiple_sites
+    Extract multiple crosslink sites/events (insertion, deletion) per read.
+
+    Args:
+        bam: str, bam file to parse, must be co-ordinate sorted and indexed
+        chrom: str, chromosome name
+        output: str, output file name
+        mate: int, mate to extract the crosslink sites from. Must be one of [1,2]
+        offset: int, offset start and end sites by "offset" base pairs, not used here
+        min_qual: int, minimum alignment quality
+        min_len: int, minimum read length
+        max_len: int, maximum read length
+        max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
+        primary: bool, flag to extract only primary alignments
+        ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
+        extract_fn: Callable, extract crosslink sites function
+    """
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -202,6 +297,8 @@ def extract_multiple_sites(
                 yb = 1
             pos_list: List[Tuple[int, int]] = extract_fn(aln)
             for start, end in pos_list:
+                if start < 0:
+                    continue
                 positions.add(
                     (start, end, f"{aln.query_name}|{aln.query_length}", yb, strand)
                 )
@@ -322,8 +419,18 @@ def _middle(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
             logger.warning("Multiple mid points found for read %s!", aln.query_name)
         rmid = pairs[qmid[0], 1]
         if rmid is None:
-            logger.warning("Mid point not found for read %s!", aln.query_name)
-            return -1, -1
+            logger.warning(
+                "Mid point for read %s is an insertion, finding the previous aligned position",
+                aln.query_name,
+            )
+            mid: int = qmid[0]
+            while mid > 0:
+                mid -= 1
+                rmid = pairs[mid, 1]
+                if rmid is not None:
+                    break
+            if rmid is None:
+                return -1, -1
         if aln.is_reverse:
             return rmid - 2, rmid - 1
         return rmid - 1, rmid
@@ -389,33 +496,6 @@ def _insertion_deletion_points(
     return ops_locations
 
 
-def _site_ops(site: str) -> Callable:
-    """_pos_ops Helper function
-    Return the appropriate function based on the choice of crosslink site
-    Args:
-        site: str, one of ["s", "i", "d", "m", "e"]
-
-    Raises:
-        NotImplementedError: If site is not one of ["s", "i", "d", "m", "e"]
-
-    Returns:
-        Callable, appropriate function based on the site
-    """
-    sites: Set[str] = {"s", "i", "d", "m", "e"}
-    if site not in sites:
-        raise NotImplementedError(f"Site must be one of {site}, but found {sites}")
-    if site == "s":
-        return _start
-    elif site == "e":
-        return _end
-    elif site == "m":
-        return _middle
-    elif site == "i":
-        return _insertion
-    else:
-        return _deletion
-
-
 def _tmp_output_writer(
     output: str,
     chrom: str,
@@ -435,39 +515,3 @@ def _tmp_output_writer(
             _ow.write(
                 f"{chrom}\t{spos[0]}\t{spos[1]}\t{spos[2]}\t{spos[3]}\t{spos[4]}\n"
             )
-
-
-# def chen_fox_lyndon_factorization(s):
-#     n = len(s)  # length of the string
-#     i = 0  # start of the string
-#     factorization = []  # list to store the factorization
-#     while i < n:  # iterate over the string
-#         j, k = (
-#             i + 1,
-#             i,
-#         )  # j is the next character index, k is the current character index
-#         while (
-#             j < n and s[k] <= s[j]
-#         ):  # while j is less than length of the string and current character is less than or equal to next character
-#             if s[k] < s[j]:  # if current character is less than next character
-#                 print(k, s[k], j, s[j], "current character < next character, k=", k)
-#                 k = i  # set k to i
-#             else:
-#                 print(
-#                     k,
-#                     s[k],
-#                     j,
-#                     s[j],
-#                     "current character == next character, so k=",
-#                     k + 1,
-#                 )
-#                 k += 1  # else increment k by 1
-#             j += 1  # increment j by 1
-#             print(f"while j<{len(s)} j=", j)
-#             # print("i=", i, "j=", j, "k=", k)
-#         while i <= k:
-#             print("i=", i, "j=", j, "k=", k)
-#             factorization.append(s[i : i + j - k])
-#             i += j - k
-#     assert "".join(factorization) == s
-#     return factorization
