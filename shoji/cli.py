@@ -1,6 +1,7 @@
 import logging
 
-import click
+import rich_click as click
+from rich_click import RichCommand, RichGroup
 
 from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
@@ -10,16 +11,36 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
+# rich_click styling options
+# see https://github.com/ewels/rich-click/tree/main/examples
+click.rich_click.USE_MARKDOWN = True
+click.rich_click.STYLE_OPTIONS_TABLE_LEADING = 1
+click.rich_click.STYLE_OPTIONS_TABLE_BOX = "SIMPLE"
+click.rich_click.STYLE_COMMANDS_TABLE_PAD_EDGE = True
+
+click.rich_click.COMMAND_GROUPS = {
+    "shoji": [
+        {
+            "name": "Annotation",
+            "commands": ["annotation", "createSlidingWindows"],
+        },
+        {
+            "name": "Extraction",
+            "commands": ["extract"],
+        },
+    ]
+}
+
 
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option()
 def run() -> None:
     """
-    \b
     Shoji: A flexible toolset for the analysis of iCLIP and eCLIP sequencing data.
-    Intended replacement for htseq-clip
-    For help on each sub command run:
-        shoji <subcommand> -h
+
+    Intended replacement for htseq-clip.
+
+    For help on each sub command run `shoji subcommand -h`
     """
 
 
@@ -132,8 +153,8 @@ def annotate(
     split_intron: bool,
 ) -> None:
     """
-    \b
     Parse gff3 file and extract features to bed format.
+
     See `shoji createSlidingWindows -h` for output file use
     """
     parser = GFF3parser(
@@ -212,8 +233,8 @@ def create_sliding_windows(
     cores: int,
 ) -> None:
     """
-    \b
     Create sliding windows from flattened annotation.
+
     See `shoji annotate -h` for annotation file creation
     """
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
@@ -359,12 +380,13 @@ def extract(
     tmp_dir: str,
 ) -> None:
     """
-    \b
     Extract crosslink sites from bam file.
+
     Crosslinks are extracted based on the read/mate position and the crosslink site choice.
+
     Crosslinks sites can be:
-        * mapped to the start, middle, end of the reads OR
-        * either insertion or deletion events in the reads
+    - mapped to the start, middle, end of the reads OR
+    - either insertion or deletion events in the reads
     """
     with BamParser(
         bam=bam, out=out, use_tabix=use_tabix, cores=cores, tmp_dir=tmp_dir
