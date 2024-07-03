@@ -217,29 +217,3 @@ def _sliding_windows(
     elif windows[-1][1] < end:
         windows.append((windows[-1][1], end))
     return windows
-
-
-# import sys
-
-
-# def main():
-#     root = logging.getLogger()
-#     root.setLevel(logging.DEBUG)
-
-#     handler = logging.StreamHandler(sys.stdout)
-#     handler.setLevel(logging.DEBUG)
-#     root.addHandler(handler)
-#     tabix_bed = (
-#         "/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.split_introns.bed.gz"
-#     )
-#     window = 100
-#     step = 20
-#     tabix_sw = f"/workspaces/Shoji/test_data/gencode.v42.tRNAs.rRNAs.split_introns.{window}_{step}.bed.gz"
-#     # sw_tabix = SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6)
-#     with SlidingWindows(annotation=tabix_bed, out=tabix_sw, cores=6) as swx:
-#         swx.generate_sliding_windows(step=step, size=window, use_tabix=True)
-#     # sw_tabix.generate_sliding_windows()
-
-
-# if __name__ == "__main__":
-#     main()
