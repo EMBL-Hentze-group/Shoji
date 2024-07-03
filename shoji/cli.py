@@ -1,6 +1,6 @@
 import logging
 
-import click
+import rich_click as click
 
 from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
@@ -10,16 +10,39 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
+# rich_click styling options
+# see https://github.com/ewels/rich-click/tree/main/examples
+# config options: https://ewels.github.io/rich-click/documentation/configuration/#configuration-options
+click.rich_click.USE_MARKDOWN = True
+click.rich_click.STYLE_SWITCH = "bold"
+click.rich_click.STYLE_OPTIONS_TABLE_LEADING = 1
+click.rich_click.STYLE_OPTIONS_TABLE_BOX = "SIMPLE"
+click.rich_click.STYLE_COMMANDS_TABLE_PAD_EDGE = True
+click.rich_click.SHOW_METAVARS_COLUMN = False
+click.rich_click.APPEND_METAVARS_HELP = True
+click.rich_click.COMMAND_GROUPS = {
+    "shoji": [
+        {
+            "name": "Annotation",
+            "commands": ["annotation", "createSlidingWindows"],
+        },
+        {
+            "name": "Extraction",
+            "commands": ["extract"],
+        },
+    ]
+}
 
-@click.group()
+
+@click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option()
 def run() -> None:
     """
-    \b
     Shoji: A flexible toolset for the analysis of iCLIP and eCLIP sequencing data.
-    Intended replacement for htseq-clip
-    For help on each sub command run:
-        shoji <subcommand> -h
+
+    Intended replacement for htseq-clip.
+
+    For help on each sub command run `shoji subcommand -h`
     """
 
 
@@ -39,7 +62,7 @@ def run() -> None:
     "out",
     type=click.Path(exists=False),
     required=True,
-    help="Output bed file name (supports .gz file, tabix indexing)",
+    help="Output bed file name (supports .gz compression, tabix indexing)",
 )
 @click.option(
     "-i",
@@ -48,7 +71,7 @@ def run() -> None:
     type=str,
     default="ID",
     show_default=True,
-    help="'ID' tag in GFF3 attribute column",
+    help="*ID* tag in GFF3 attribute column",
 )
 @click.option(
     "-p",
@@ -57,7 +80,7 @@ def run() -> None:
     type=str,
     default="Parent",
     show_default=True,
-    help="'Parent' tag in GFF3 attribute column",
+    help="*Parent* tag in GFF3 attribute column",
 )
 @click.option(
     "-g",
@@ -66,7 +89,7 @@ def run() -> None:
     type=str,
     default="gene_id",
     show_default=True,
-    help="'Gene id' tag in GFF3 attribute column",
+    help="*Gene id* tag in GFF3 attribute column",
 )
 @click.option(
     "-n",
@@ -75,7 +98,7 @@ def run() -> None:
     type=str,
     default="gene_name",
     show_default=True,
-    help="'Gene name' tag in GFF3 attribute column",
+    help="*Gene name* tag in GFF3 attribute column",
 )
 @click.option(
     "-t",
@@ -84,7 +107,7 @@ def run() -> None:
     type=str,
     default="gene_type",
     show_default=True,
-    help="'Gene type' tag in GFF3 attribute column",
+    help="*Gene type* tag in GFF3 attribute column",
 )
 @click.option(
     "-f",
@@ -102,14 +125,14 @@ def run() -> None:
     multiple=True,
     default=["tRNA"],
     show_default=True,
-    help="'Gene' like featuers to parse from GFF3 (based on GFF3 3rd column). Multiple values can be passed as -x tRNA -x rRNA...",
+    help="*Gene* like features to parse from GFF3 (based on GFF3 3rd column). Multiple values can be passed as -x tRNA -x rRNA...",
 )
 @click.option(
     "--tabix",
     is_flag=True,
     default=False,
     show_default=True,
-    help="If the output suffix is '.gz', use this flag to index the output bed file using tabix",
+    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
 )
 @click.option(
     "--split-intron",
@@ -132,9 +155,15 @@ def annotate(
     split_intron: bool,
 ) -> None:
     """
-    \b
     Parse gff3 file and extract features to bed format.
+
     See `shoji createSlidingWindows -h` for output file use
+
+    Basic usage: `shoji annotate -a <annotation.gff3> -o <out.bed>`
+
+    Note:
+
+    The default values used for --id, --parent, --gene_id, --gene_name, --gene_type are Gencode GFF3 attribute tags.
     """
     parser = GFF3parser(
         gff=gff,
@@ -159,7 +188,7 @@ def annotate(
     "annotation",
     type=click.Path(exists=True),
     required=True,
-    help="Input annotation file [see 'shoji annotate -h'] to create sliding windows (supports .gz files, tabix indexed files)",
+    help="Input annotation file [see `shoji annotate -h`] to create sliding windows (supports .gz files, tabix indexed files)",
 )
 @click.option(
     "-o",
@@ -167,7 +196,7 @@ def annotate(
     "out",
     type=click.Path(exists=False),
     required=True,
-    help="Output sliding windows bed file name (supports .gz file, tabix indexing)",
+    help="Output sliding windows bed file name (supports .gz compression, tabix indexing)",
 )
 @click.option(
     "-w",
@@ -192,7 +221,7 @@ def annotate(
     is_flag=True,
     default=False,
     show_default=True,
-    help="If the output suffix is '.gz', use this flag to index the output bed file using tabix",
+    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
 )
 @click.option(
     "-c",
@@ -212,9 +241,11 @@ def create_sliding_windows(
     cores: int,
 ) -> None:
     """
-    \b
     Create sliding windows from flattened annotation.
+
     See `shoji annotate -h` for annotation file creation
+
+    Basic usage: `shoji creteSlidingWindows -a <annotation.bed> -o <out_w100_s20.bed> -w 100 -s 20 -c 6`
     """
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
@@ -314,7 +345,7 @@ def create_sliding_windows(
     is_flag=True,
     default=False,
     show_default=True,
-    help="Flag to ignore PCR duplicate reads ( works only if bam file has PCR duplicate flag set using tools such as samtools markdup)",
+    help="Flag to ignore PCR duplicate reads (works only if bam file has PCR duplicate flag set using tools such as samtools markdup)",
 )
 @click.option(
     "--tabix",
@@ -322,7 +353,7 @@ def create_sliding_windows(
     is_flag=True,
     default=False,
     show_default=True,
-    help="If the output suffix is '.gz', use this flag to index the output bed file using tabix",
+    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
 )
 @click.option(
     "-c",
@@ -340,7 +371,7 @@ def create_sliding_windows(
     type=str,
     default=None,
     show_default=True,
-    help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in '--out' parent directory",
+    help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in --out parent directory",
 )
 def extract(
     bam: str,
@@ -359,12 +390,16 @@ def extract(
     tmp_dir: str,
 ) -> None:
     """
-    \b
     Extract crosslink sites from bam file.
+
     Crosslinks are extracted based on the read/mate position and the crosslink site choice.
+
     Crosslinks sites can be:
-        * mapped to the start, middle, end of the reads OR
-        * either insertion or deletion events in the reads
+    - mapped to the start, middle, end of the reads OR
+    - either insertion or deletion events in the reads
+
+    Basic usage for eCLIP data:
+    `shoji extract -b <bam> -o <out.bed> -e 1 -s s -g -1 -c 6`
     """
     with BamParser(
         bam=bam, out=out, use_tabix=use_tabix, cores=cores, tmp_dir=tmp_dir
