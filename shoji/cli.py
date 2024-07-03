@@ -1,7 +1,10 @@
-import click
 import logging
-from .gff3_parser import GFF3parser
+
+import click
+
+from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
+from .gff3_parser import GFF3parser
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,7 @@ def run() -> None:
     """
 
 
+# annotation subcommand
 @run.command("annotation", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "-g",
@@ -129,7 +133,7 @@ def annotate(
 ) -> None:
     """
     \b
-    Parse gff3 file and extract features to bed format
+    Parse gff3 file and extract features to bed format.
     See `shoji createSlidingWindows -h` for output file use
     """
     parser = GFF3parser(
@@ -147,6 +151,7 @@ def annotate(
     parser.process(feature_type=feature)
 
 
+# createSlidingWindows subcommand
 @run.command("createSlidingWindows", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "-a",
@@ -208,11 +213,173 @@ def create_sliding_windows(
 ) -> None:
     """
     \b
-    Create sliding windows from flattened annotation
+    Create sliding windows from flattened annotation.
     See `shoji annotate -h` for annotation file creation
     """
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
+
+
+# extract subcommand
+@run.command("extract", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "-b",
+    "--bam",
+    "bam",
+    type=click.Path(exists=True),
+    required=True,
+    help="Alignment bam file. Must be co-ordinate sorted and indexed",
+)
+@click.option(
+    "-o",
+    "--out",
+    "out",
+    type=click.Path(exists=False),
+    required=True,
+    help="Output crosslink sites in BED6 format (supports .gz file, tabix indexing)",
+)
+@click.option(
+    "-e",
+    "--mate",
+    "mate",
+    type=click.Choice(["1", "2"]),
+    required=True,
+    multiple=False,
+    help="for paired end sequencing, select the read/mate to extract the crosslink sites. For single end data, the choice is always 1",
+)
+@click.option(
+    "-s",
+    "--site",
+    "site",
+    type=click.Choice(["s", "m", "e", "i", "d"]),
+    required=True,
+    multiple=False,
+    help="Crosslink site choices, s : start, m : middle, e : end, i : insertion, d : deletion",
+)
+@click.option(
+    "-g",
+    "--offset",
+    "offset",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Number of nucleotides to offset for crosslink sites",
+)
+@click.option(
+    "-q",
+    "--qual",
+    "min_qual",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Minimum alignment quality score",
+)
+@click.option(
+    "-m",
+    "--min_len",
+    "min_len",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Minimum read length",
+)
+@click.option(
+    "-x",
+    "--max_len",
+    "max_len",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Maximum read length",
+)
+@click.option(
+    "-l",
+    "--max_interval_len",
+    "max_interval_len",
+    type=int,
+    default=10000,
+    show_default=True,
+    help="Maximum read interval length",
+)
+@click.option(
+    "--primary",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Flag to use only the  primary alignment positions",
+)
+@click.option(
+    "--ignore_PCR_duplicates",
+    "ignore_PCR",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Flag to ignore PCR duplicate reads ( works only if bam file has PCR duplicate flag set using tools such as samtools markdup)",
+)
+@click.option(
+    "--tabix",
+    "use_tabix",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="If the output suffix is '.gz', use this flag to index the output bed file using tabix",
+)
+@click.option(
+    "-c",
+    "--cpus",
+    "cores",
+    type=int,
+    default=6,
+    show_default=True,
+    help="Number of cores to use for parallel processing",
+)
+@click.option(
+    "-t",
+    "--tmp",
+    "tmp_dir",
+    type=str,
+    default=None,
+    show_default=True,
+    help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in '--out' parent directory",
+)
+def extract(
+    bam: str,
+    out: str,
+    mate: str,
+    site: str,
+    offset: int,
+    min_qual: int,
+    min_len: int,
+    max_len: int,
+    max_interval_len: int,
+    primary: bool,
+    ignore_PCR: bool,
+    use_tabix: bool,
+    cores: int,
+    tmp_dir: str,
+) -> None:
+    """
+    \b
+    Extract crosslink sites from bam file.
+    Crosslinks are extracted based on the read/mate position and the crosslink site choice.
+    Crosslinks sites can be:
+        * mapped to the start, middle, end of the reads OR
+        * either insertion or deletion events in the reads
+    """
+    with BamParser(
+        bam=bam, out=out, use_tabix=use_tabix, cores=cores, tmp_dir=tmp_dir
+    ) as bp:
+        bp.extract(
+            site=site,
+            mate=int(mate),
+            offset=offset,
+            min_qual=min_qual,
+            min_len=min_len,
+            max_len=max_len,
+            max_interval_len=max_interval_len,
+            primary=primary,
+            ignore_PCR=ignore_PCR,
+        )
 
 
 if __name__ == "__main__":

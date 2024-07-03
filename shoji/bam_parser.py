@@ -337,7 +337,8 @@ def _discard_read(
         or aln.mapping_quality < qual
         or aln.query_length < min_len
         or aln.query_length > max_len
-        or aln.reference_length > max_interval_len
+        or aln.reference_length
+        > max_interval_len  # @TODO: fix this to consider only spliced segments
     ):
         return True
     if (primary and aln.is_secondary) or (ignore_PCR and aln.is_duplicate):
