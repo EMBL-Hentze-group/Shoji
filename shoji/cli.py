@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 
-@click.group()
+@click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option()
 def run() -> None:
     """
