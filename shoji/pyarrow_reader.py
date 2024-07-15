@@ -1,8 +1,9 @@
 import logging
 import tempfile
+from ast import List
 from pathlib import Path
-from typing import Optional, Dict
 from shutil import rmtree
+from typing import Dict, List, Optional
 
 import pyarrow as pa
 import pyarrow.csv as pv
@@ -214,6 +215,10 @@ class PartionedParquetReader:
         self._is_supported_format(fformat)
         # only "hive" partitioning supports pds.get_partition_keys(fragment.partition_expression)
         self._flavor: str = "hive"
+        # partitioned fragment dictionary
+        self._fragments: Dict[str, pds.ParquetFileFragment] = {}
+        # partitioned dataset
+        self._ppq: pds.Dataset = None
 
     def __enter__(self) -> "PartionedParquetReader":
         logging.debug(
@@ -225,13 +230,14 @@ class PartionedParquetReader:
             self._pr.gff_to_partitioned_parquet(self._tmp_pq, flavor=self._flavor)
         elif self._is_bed6:
             self._pr.bed6_to_partitioned_parquet(self._tmp_pq, flavor=self._flavor)
+        self._partition_data()
         return self
 
     def __exit__(self, except_type, except_val, except_traceback):
         rmtree(self._tmp_pq)
 
     def _is_supported_format(self, fformat: str) -> None:
-        """_is_supported_format
+        """_is_supported_format Helper function
         Check if the input file is one of the supported formats
         Args:
             format: str, one of gff, gff3, bed6
@@ -258,7 +264,7 @@ class PartionedParquetReader:
             )
 
     def _touch_tmp_pq(self, temp_dir) -> str:
-        """_tmp_pq
+        """_tmp_pq Helper function
         Create tmp. parquet file
         Args:
             temp_dir: str, tmp. dir name. MUST exist
@@ -269,23 +275,47 @@ class PartionedParquetReader:
         second_tmp_dir = tempfile.mkdtemp(dir=temp_dir)
         return second_tmp_dir  # type: ignore
 
-    def get_partitioned_fragments(self) -> Dict[str, pds.ParquetFileFragment]:
-        """get_partitioned_fragments partitioned fragment
-        For GFF/BED files paritioned on chromosome,
-        return chromosome name (parition key) and parquet file fragment for the chromosome
+    def _partition_data(self) -> None:
+        """_partition_data Helper function
+        For GFF/BED files paritioned on chromosome, partition file based on chromosome name
         Raises:
-            RuntimeError: Raise runtime error if there are more than one partition key per fragment
-
-        Returns:
-            Dict[str, pds.ParquetFileFragment], key: chromosome name, value: parquet file fragment for the chromosome
+            RuntimeError:Raise runtime error if there are more than one partition key per fragment
         """
-        fragments: Dict[str, pds.ParquetFileFragment] = {}
-        ppq = pds.dataset(self._tmp_pq, format="parquet", partitioning=self._flavor)
-        for frag in ppq.get_fragments():
+        self._ppq = pds.dataset(
+            self._tmp_pq, format="parquet", partitioning=self._flavor
+        )
+        for frag in self._ppq.get_fragments():
             partition_dict = pds.get_partition_keys(frag.partition_expression)
             if len(partition_dict) != 1:  # type: ignore
                 raise RuntimeError(
                     f"Supports only one partition key at the moment. {self._tmp_pq} either the partition keys are empty or there are more than one partition keys!"
                 )
-            fragments[list(partition_dict.values())[0]] = frag
-        return fragments
+            self._fragments[list(partition_dict.values())[0]] = frag
+
+    def get_partitioned_fragments(self) -> Dict[str, pds.ParquetFileFragment]:
+        """get_partitioned_fragments partitioned fragment
+
+        Returns:
+            Dict[str, pds.ParquetFileFragment], key: chromosome name, value: parquet file fragment for the chromosome
+        """
+        return self._fragments
+
+    @property
+    def contigs(self) -> List[str]:
+        """contigs
+        List of chromosome names
+        Returns:
+            List[str]
+        """
+        return sorted(self._fragments.keys())
+
+    def fetch(self, reference: str) -> pds.ParquetFileFragment:
+        """fetch fetch data for given reference string
+        Given a reference string (chromosome name), fetch data for the chromosome
+
+        Args:
+            reference: str, chromosome name
+        Returns:
+            pds.ParquetFileFragment
+        """
+        return self._fragments[reference]
