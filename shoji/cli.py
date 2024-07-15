@@ -5,6 +5,7 @@ import rich_click as click
 from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
+from .map_to_id import MapToId
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ click.rich_click.COMMAND_GROUPS = {
     "shoji": [
         {
             "name": "Annotation",
-            "commands": ["annotation", "createSlidingWindows"],
+            "commands": ["annotation", "createSlidingWindows", "mapToId"],
         },
         {
             "name": "Extraction",
@@ -249,6 +250,32 @@ def create_sliding_windows(
     """
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
+
+
+# mapToId subcommand
+@run.command("mapToId", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "-a",
+    "--annotation",
+    "annotation",
+    type=click.Path(exists=True),
+    required=True,
+    help="flattened annotation file from `shoji annotation -h` or sliding window file from `shoji createSlidingWindows -h`",
+)
+@click.option(
+    "-o",
+    "--out",
+    "out",
+    type=click.Path(exists=False),
+    required=True,
+    help="Output file, supports .gz compression. Region/window annotation mapped to a unique id",
+)
+def map_to_id(annotation: str, out: str) -> None:
+    """
+    map entries in *name* column to unique ids and write in tab separated format
+    """
+    mid = MapToId(annotation=annotation, out=out)
+    mid.map_to_id()
 
 
 # extract subcommand
