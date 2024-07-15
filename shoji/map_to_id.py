@@ -1,9 +1,6 @@
 import gzip
 import logging
-from os import name
-import re
 from functools import partial
-from pathlib import Path
 from typing import Callable, List, Set
 
 from .output import output_writer
