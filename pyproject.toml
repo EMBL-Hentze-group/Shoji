@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "shoji"
-version = "0.5.5"
+version = "0.6.0"
 description = "post process *clip reads after alignment. Replacement for htseq-clip"
 authors = ["Sudeep Sahadevan"]
 license = "MIT"
@@ -14,6 +14,7 @@ numpy = "^1.26.4"
 pyarrow = "^16.1.0"
 sortedcontainers = "^2.4.0"
 rich-click = "^1.8.3"
+loguru = "^0.7.2"
 
 [tool.poetry.scripts]
 shoji = "shoji.cli:run"

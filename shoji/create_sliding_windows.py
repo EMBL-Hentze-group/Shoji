@@ -1,4 +1,3 @@
-import logging
 import multiprocessing as mp
 import tempfile
 from pathlib import Path
@@ -6,14 +5,13 @@ from shutil import rmtree
 from typing import Dict, List, Tuple
 
 import pysam
+from loguru import logger
 from pyarrow.dataset import ParquetFileFragment
 from sortedcontainers import SortedList
 
 from . import pyarrow_reader as pr
-from .helpers import set_cores
+from .helpers import set_cores, check_tabix
 from .output import general_accumulator, output_writer, tabix_accumulator
-
-logger = logging.getLogger(__name__)
 
 
 class SlidingWindows:
@@ -31,7 +29,7 @@ class SlidingWindows:
         self.out = out
         self.cores = set_cores(cores)
         self._temp_dir = tempfile.mkdtemp(dir=Path(out).parent)
-        logger.debug("Temp. dir %s", self._temp_dir)
+        logger.debug(f"Temp. dir {self._temp_dir}")
 
     def __enter__(self) -> "SlidingWindows":
         return self
@@ -39,10 +37,18 @@ class SlidingWindows:
     def __exit__(self, except_type, except_val, except_traceback):
         rmtree(self._temp_dir)  # clean up temp dir
         if except_type:
-            logging.exception(except_val)
+            logger.exception(except_val)
 
     def generate_sliding_windows(self, step: int, size: int, use_tabix: bool) -> None:
-        if self._check_tabix():
+        """
+        Generate sliding windows of a given size and step.
+
+        Args:
+            step (int): The distance between two adjacent windows.
+            size (int): The size each window.
+            use_tabix (bool): Whether to use Tabix or not. If True, and the output is gzip, the file will be tabix indexed.
+        """
+        if check_tabix(self.annotation):
             self._tabix_sliding_windows(
                 step=step,
                 size=size,
@@ -55,21 +61,15 @@ class SlidingWindows:
                 use_tabix=use_tabix,
             )
 
-    def _check_tabix(self) -> bool:
-        """_check_tabix check for tabix indices
-        Helper function to check for tabx indices (.csi or .tbi)
-        Returns:
-            bool
-        """
-        annpath = Path(self.annotation)
-        if (annpath.parent / (annpath.name + ".tbi")).exists() or (
-            annpath.parent / (annpath.name + ".csi")
-        ).exists():
-            logger.info("%s is tabix indexed", self.annotation)
-            return True
-        return False
-
     def _tabix_sliding_windows(self, step: int, size: int, use_tabix: bool) -> None:
+        """Helper function
+        Create sliding windows from an annotation file.
+
+        Args:
+            step (int): Size of the window step.
+            size (int): Size of the window.
+            use_tabix (bool): Whether to use tabix compression
+        """
         suffix: str = Path(self.out).suffix
         if use_tabix:
             suffix = ".bed"
@@ -98,13 +98,24 @@ class SlidingWindows:
             general_accumulator(sw_dict, self.out)
 
     def _parquet_sliding_windows(self, step: int, size: int, use_tabix: bool) -> None:
+        """Helper function
+        Generates position-sorted sliding windows from a partitioned Parquet file.
+
+        Args:
+            step (int): The step size for the sliding window.
+            size (int): The size of the sliding window.
+            use_tabix (bool): Whether to write the output as a tabixed compressed, indexed file.
+        """
         suffix: str = Path(self.out).suffix
         if use_tabix:
             suffix = ".bed"
         sw_dict: Dict[str, str] = {}
         temp_dir = Path(self._temp_dir)
         with pr.PartionedParquetReader(
-            file_name=self.annotation, fformat="bed6", temp_dir=self._temp_dir
+            file_name=self.annotation,
+            fformat="bed6",
+            temp_dir=self._temp_dir,
+            cores=self.cores,
         ) as ppq:
             fragments = ppq.get_partitioned_fragments()
             with mp.Pool(processes=self.cores) as pool:
@@ -139,10 +150,15 @@ def tabix_sw_worker(
         step: int, step size for sliding windows
         size: int, window size
     """
+    logger.debug(
+        f"Process id: {mp.current_process().pid}, chromosome: {chrom}, temp. file {out}"
+    )
+    fc, wc = 0, 0
     wwriter = output_writer(out, use_tabix=False, preset="bed")
     heap = SortedList()
     with pysam.TabixFile(annotation) as _annw, wwriter(out) as _ow:
         for feature in _annw.fetch(chrom, parser=pysam.asBed()):
+            fc += 1
             for wi, (wstart, wend) in enumerate(
                 _sliding_windows(feature.start, feature.end, step, size)
             ):
@@ -155,18 +171,39 @@ def tabix_sw_worker(
                         feature.strand,
                     )
                 )
+                wc += 1
         for dat in heap:
             # chromsome, start, stop, name, score, strand
             _ow.write(f"{chrom}\t{dat[0]}\t{dat[1]}\t{dat[2]}\t{dat[3]}\t{dat[4]}\n")
+    logger.info(f"Finished {chrom}: # features: {fc:,} # windows: {wc:,}")
 
 
 def parquet_sw_worker(
     fragment: ParquetFileFragment, out: str, chrom: str, step: int, size: int
 ) -> None:
+    """
+    Process a Parquet file fragment into sliding windows.
+
+    Args:
+        fragment (ParquetFileFragment): Input Parquet file fragment.
+        out (str): Output file path.
+        chrom (str): Chromosome name.
+        step (int): Step size for sliding window.
+        size (int): Window size.
+
+    Writes output to the specified file in bed format. Each line
+    represents a feature with its start, stop, name, score, and strand information.
+    The features are grouped by chromosome and ordered by their start position.
+    """
+    logger.debug(
+        f"Process id: {mp.current_process().pid}, chromosome: {chrom}, temp. file {out}"
+    )
     wwriter = output_writer(out, use_tabix=False, preset="bed")
     heap = SortedList()
+    fc, wc = 0, 0
     with wwriter(out) as _ow:
         for feature in fragment.to_table().to_pylist():
+            fc += 1  # feature count
             for wi, (wstart, wend) in enumerate(
                 _sliding_windows(
                     feature["chromStart"],
@@ -184,9 +221,11 @@ def parquet_sw_worker(
                         feature["strand"],
                     )
                 )
+                wc += 1  # window count
         for dat in heap:
             # chromsome, start, stop, name, score, strand
             _ow.write(f"{chrom}\t{dat[0]}\t{dat[1]}\t{dat[2]}\t{dat[3]}\t{dat[4]}\n")
+    logger.info(f"Finished {chrom}: # features: {fc:,} # windows: {wc:,}")
 
 
 def _sliding_windows(

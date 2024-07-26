@@ -1,4 +1,3 @@
-import logging
 import multiprocessing as mp
 import tempfile
 from decimal import ROUND_HALF_UP, Decimal
@@ -15,7 +14,7 @@ from sortedcontainers import SortedList
 from .helpers import set_cores
 from .output import general_accumulator, output_writer, tabix_accumulator
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class BamParser:
@@ -55,10 +54,13 @@ class BamParser:
                 raise FileNotFoundError(f"Directory {tmp_dir} does not exist")
             self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
         self._tmp.mkdir(parents=True, exist_ok=True)
-        logger.info("Using %s as temp. directory", str(self._tmp))
+        logger.debug(
+            f"Using {str(self._tmp)} as temp. directory",
+        )
         # list of chromosomes in the bam file
         self._chroms: List[str] = self._get_chromosomes()
-        logger.info("Found %i chromosomes in %s", len(self._chroms), self.bam)
+        logger.info(f"Found {len(self._chroms)} chromosomes in {self.bam}")
+        logger.debug(f"chromosomes: {','.join(self._chroms)}")
 
     def __enter__(self):
         return self
@@ -217,6 +219,10 @@ def extract_single_site(
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
         extract_fn: Callable, function to extract appropriate crosslink event
     """
+    logger.debug(
+        f"Process id: {mp.current_process().pid}, chromosome: {chrom}, temp. file: {output}"
+    )
+    used, discarded = 0, 0
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -230,9 +236,14 @@ def extract_single_site(
                 primary,
                 ignore_PCR,
             ):
+                discarded += 1
                 continue
             start, end = extract_fn(aln, offset)
             if start < 0:
+                logger.warning(
+                    f"{aln.reference_name}: crosslink site position for read {aln.query_name} is {start}! skipping..."
+                )
+                discarded += 1
                 continue
             strand: str = "-" if aln.is_reverse else "+"
             try:
@@ -242,6 +253,11 @@ def extract_single_site(
             positions.add(
                 (start, end, f"{aln.query_name}|{aln.query_length}", yb, strand)
             )
+            used += 1
+    total = used + discarded
+    logger.info(
+        f"Finished {chrom}. total reads: {total:,} used reads: {used:,} discarded reads: {discarded:,}"
+    )
     _tmp_output_writer(output, chrom, positions)
 
 
@@ -276,6 +292,10 @@ def extract_multiple_sites(
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
         extract_fn: Callable, extract crosslink sites function
     """
+    logger.debug(
+        f"Process id: {mp.current_process().pid}, chromosome: {chrom}, temp. file: {output}"
+    )
+    used, discarded = 0, 0
     positions: SortedList = SortedList()
     with pysam.AlignmentFile(bam, mode="rb") as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
@@ -289,6 +309,7 @@ def extract_multiple_sites(
                 primary,
                 ignore_PCR,
             ):
+                discarded += 1
                 continue
             strand: str = "-" if aln.is_reverse else "+"
             try:
@@ -298,10 +319,18 @@ def extract_multiple_sites(
             pos_list: List[Tuple[int, int]] = extract_fn(aln)
             for start, end in pos_list:
                 if start < 0:
+                    logger.warning(
+                        f"{aln.reference_name}: crosslink site position for read {aln.query_name} is {start}! skipping..."
+                    )
                     continue
                 positions.add(
                     (start, end, f"{aln.query_name}|{aln.query_length}", yb, strand)
                 )
+            used += 1
+    total = used + discarded
+    logger.info(
+        f"Finished {chrom}. total reads: {total:,} used reads: {used:,} discarded reads: {discarded:,}"
+    )
     _tmp_output_writer(output, chrom, positions)
 
 
@@ -417,12 +446,13 @@ def _middle(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         except IndexError:
             return -1, -1
         if len(qmid) > 1:
-            logger.warning("Multiple mid points found for read %s!", aln.query_name)
+            logger.warning(
+                f"{aln.reference_name}: Multiple mid points found for read {aln.query_name}!"
+            )
         rmid = pairs[qmid[0], 1]
         if rmid is None:
             logger.warning(
-                "Mid point for read %s is an insertion, finding the previous aligned position",
-                aln.query_name,
+                f"{aln.reference_name}: Mid point for read {aln.query_name} is an insertion, finding the previous aligned position"
             )
             mid: int = qmid[0]
             while mid > 0:

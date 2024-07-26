@@ -1,14 +1,13 @@
-import logging
 import tempfile
 from contextlib import contextmanager
 from functools import partial
+from gzip import open as gzopen
 from pathlib import Path
 from shutil import copyfileobj
 from typing import Callable, Dict, Generator, Optional, Set
-from gzip import open as gzopen
-from pysam import tabix_compress, tabix_index
 
-logger = logging.getLogger(__file__)
+from loguru import logger
+from pysam import tabix_compress, tabix_index
 
 
 def output_writer(out: str, use_tabix: bool, preset: str) -> Callable:
@@ -30,19 +29,19 @@ def output_writer(out: str, use_tabix: bool, preset: str) -> Callable:
     gz_suffix: Set[str] = set([".gz", ".gzip"])
     out_suffix = Path(out).suffix.lower()
     if Path(out).exists():
-        logging.warning("Re-writing file %s", out)
+        logger.warning(f"Re-writing file {out}")
     if use_tabix and (out_suffix not in tb_suffix):
         raise NotImplementedError(
             f"Cannot use tabix index with {out_suffix} for output file {out}"
         )
     if out_suffix in tb_suffix and use_tabix:
-        logger.info("%s format: bgzip, create tabix index: True", out)
+        logger.debug(f"{out} format: bgzip, create tabix index: True")
         return partial(tabix_writer, preset=preset)
     elif out_suffix in gz_suffix:
-        logger.info("%s format: %s", out, out_suffix)
+        logger.debug(f"{out} format: {out_suffix}")
         return partial(gzopen, mode="wt")
     else:
-        logger.info("%s format: plain text", out)
+        logger.debug(f"{out} format: plain text")
         return partial(open, mode="w")
 
 
@@ -61,15 +60,15 @@ def tabix_writer(
         Generator[tempfile._TemporaryFileWrapper, None, None]
     """
     tmpfile = tempfile.NamedTemporaryFile(mode="wt", delete=False, dir=temp_dir)
-    logger.debug("Tmp file: %s", tmpfile.name)
+    logger.debug(f"Tmp file: {tmpfile.name}")
     try:
         yield tmpfile
         tmpfile.close()
     finally:
         if tmpfile.closed:
-            logger.info("Writing bgzip file %s", file_name)
+            logger.info(f"Writing bgzip file {file_name}")
             tabix_compress(tmpfile.name, file_name, force=True)
-            logger.info("Indexing bgzip file %s", file_name)
+            logger.info(f"Indexing bgzip file {file_name}")
             tabix_index(file_name, force=True, preset=preset)  # type: ignore
         Path(tmpfile.name).unlink(missing_ok=True)
 
@@ -87,14 +86,14 @@ def tabix_accumulator(
         preset: str, preset to index tabix file. Defaults to "bed".
     """
     if Path(file_name).exists():
-        logger.warning("Re-writing file %s", file_name)
+        logger.warning(f"Re-writing file {file_name}")
     with tempfile.NamedTemporaryFile(dir=temp_dir, mode="wb") as tmpsw:
         for chrom in sorted(temp_files.keys()):
             copyfileobj(open(temp_files[chrom], "rb"), tmpsw)
         tmpsw.flush()
-        logger.info("Writing bgzip file %s from temp file %s", file_name, tmpsw.name)
+        logger.info(f"Writing bgzip file {file_name} from temp file {tmpsw.name}")
         tabix_compress(tmpsw.name, file_name, force=True)
-        logger.info("Indexing bgzip file %s", file_name)
+        logger.info(f"Indexing bgzip file {file_name}")
         tabix_index(file_name, force=True, preset=preset)  # type: ignore
 
 
@@ -107,7 +106,7 @@ def general_accumulator(temp_files: Dict[str, str], file_name: str) -> None:
         file_name: str, output file name
     """
     if Path(file_name).exists():
-        logger.warning("Re-writing file %s", file_name)
+        logger.warning(f"Re-writing file {file_name}")
     with open(file_name, "wb") as fh:
         for chrom in sorted(temp_files.keys()):
             copyfileobj(open(temp_files[chrom], "rb"), fh)

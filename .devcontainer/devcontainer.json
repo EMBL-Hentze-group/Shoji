@@ -6,11 +6,20 @@
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+	"workspaceFolder": "/workspace",
 	"features": {
 		"ghcr.io/devcontainers-contrib/features/black:2": {},
 		"ghcr.io/devcontainers-contrib/features/isort:2": {},
 		"ghcr.io/devcontainers-contrib/features/pylint:2": {},
 		"ghcr.io/devcontainers-contrib/features/ruff:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"Continue.continue"
+			]
+		}
 	}
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},

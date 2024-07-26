@@ -1,11 +1,10 @@
 import gzip
-import logging
 from functools import partial
 from typing import Callable, List, Set
 
-from .output import output_writer
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from .output import output_writer
 
 
 class MapToId:
@@ -63,10 +62,10 @@ class MapToId:
                 f"'Name' column in file:{self.annotation} has varying numbers of elements separated by '@'. Check this input file!"
             )
         elif len(ncomp) == 1 and ncomp[0] == 6:
-            logger.info("%s is not windowed", self.annotation)
+            logger.info(f"{self.annotation} is not windowed")
             self._is_windowed = False
         elif len(ncomp) == 1 and ncomp[0] == 7:
-            logger.info("%s is windowed", self.annotation)
+            logger.info(f"{self.annotation} is windowed")
             self._is_windowed = True
 
     def map_to_id(self) -> None:

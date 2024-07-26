@@ -1,6 +1,4 @@
-import logging
 import tempfile
-from ast import List
 from pathlib import Path
 from shutil import rmtree
 from typing import Dict, List, Optional
@@ -9,8 +7,7 @@ import pyarrow as pa
 import pyarrow.csv as pv
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def skip_comment(row) -> str:
@@ -108,7 +105,7 @@ class Reader:
             partition_opts: pyarrow.dataset.partition options
         """
         with tempfile.NamedTemporaryFile(suffix=".parquet", dir=self.tmp_dir) as tmpq:
-            logger.debug("Tmp file: %s", tmpq.name)
+            logger.debug(f"Tmp file: {tmpq.name}")
             writer: Optional[pq.core.ParquetWriter] = None
             with pv.open_csv(
                 self.file_name,
@@ -206,8 +203,10 @@ class PartionedParquetReader:
     partitiotioning on chromosome (default) and read individual files
     """
 
-    def __init__(self, file_name: str, fformat: str, temp_dir: str) -> None:
+    def __init__(self, file_name: str, fformat: str, temp_dir: str, cores: int) -> None:
         self.file_name: str = file_name
+        # set number of cpus to use
+        pa.set_cpu_count(cores)
         self._pr = Reader(self.file_name, temp_dir)
         self._tmp_pq: str = self._touch_tmp_pq(temp_dir)
         self._is_gff: bool = False
@@ -221,10 +220,8 @@ class PartionedParquetReader:
         self._ppq: pds.Dataset = None
 
     def __enter__(self) -> "PartionedParquetReader":
-        logging.debug(
-            "Temp. parquet file: %s, partitioning flavor: %s",
-            self._tmp_pq,
-            self._flavor,
+        logger.debug(
+            f"Temp. parquet file: {self._tmp_pq}, partitioning flavor: {self._flavor}"
         )
         if self._is_gff:
             self._pr.gff_to_partitioned_parquet(self._tmp_pq, flavor=self._flavor)
@@ -308,14 +305,3 @@ class PartionedParquetReader:
             List[str]
         """
         return sorted(self._fragments.keys())
-
-    def fetch(self, reference: str) -> pds.ParquetFileFragment:
-        """fetch fetch data for given reference string
-        Given a reference string (chromosome name), fetch data for the chromosome
-
-        Args:
-            reference: str, chromosome name
-        Returns:
-            pds.ParquetFileFragment
-        """
-        return self._fragments[reference]
