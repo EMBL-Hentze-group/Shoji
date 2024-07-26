@@ -111,7 +111,7 @@ class GFF3parser:
         chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
         strands: List[str] = gff3_pa.column("strand").unique().tolist()
         logger.info(
-            f"Found {gff3_pa.shape[0]:,} intervals from {len(chroms):,} chromosomes in self.gff"
+            f"Found {gff3_pa.shape[0]:,} intervals from {len(chroms):,} chromosomes in {self.gff}"
         )
         with self._ow(self.out) as _fh:
             # _fh: Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
