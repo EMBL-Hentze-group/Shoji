@@ -5,6 +5,7 @@ from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
 from .map_to_id import MapToId
+from .count import Count
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -27,6 +28,10 @@ click.rich_click.COMMAND_GROUPS = {
         {
             "name": "Extraction",
             "commands": ["extract"],
+        },
+        {
+            "name": "Counting",
+            "commands": ["count"],
         },
     ]
 }
@@ -55,6 +60,7 @@ def run() -> None:
     """
 
 
+# A common set of options used by multiple sub commands
 verbose_option = click.option(
     "-v",
     "--verbose",
@@ -64,7 +70,6 @@ verbose_option = click.option(
     show_default=True,
     help="Verbose level",
 )
-
 cores_option = click.option(
     "-c",
     "--cpus",
@@ -73,6 +78,22 @@ cores_option = click.option(
     default=6,
     show_default=True,
     help="Number of cores to use for parallel processing",
+)
+tabix_option = click.option(
+    "--tabix",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix. It is recommended to use *.gz* suffix and this flag for output files",
+)
+tmp_option = click.option(
+    "-t",
+    "--tmp",
+    "tmp_dir",
+    type=str,
+    default=None,
+    show_default=True,
+    help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in --out parent directory",
 )
 
 
@@ -157,13 +178,7 @@ cores_option = click.option(
     show_default=True,
     help="*Gene* like features to parse from GFF3 (based on GFF3 3rd column). Multiple values can be passed as -x tRNA -x rRNA...",
 )
-@click.option(
-    "--tabix",
-    is_flag=True,
-    default=False,
-    show_default=True,
-    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
-)
+@tabix_option
 @click.option(
     "--split-intron",
     is_flag=True,
@@ -249,13 +264,7 @@ def annotate(
     show_default=True,
     help="Step/slide (in bp), from beginning of the previous window to the beginning of the current window",
 )
-@click.option(
-    "--tabix",
-    is_flag=True,
-    default=False,
-    show_default=True,
-    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
-)
+@tabix_option
 @cores_option
 @verbose_option
 def create_sliding_windows(
@@ -403,23 +412,8 @@ def map_to_id(annotation: str, out: str, verbose: str) -> None:
     show_default=True,
     help="Flag to ignore PCR duplicate reads (works only if bam file has PCR duplicate flag set using tools such as samtools markdup)",
 )
-@click.option(
-    "--tabix",
-    "use_tabix",
-    is_flag=True,
-    default=False,
-    show_default=True,
-    help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
-)
-@click.option(
-    "-t",
-    "--tmp",
-    "tmp_dir",
-    type=str,
-    default=None,
-    show_default=True,
-    help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in --out parent directory",
-)
+@tabix_option
+@tmp_option
 @cores_option
 @verbose_option
 def extract(
@@ -434,7 +428,7 @@ def extract(
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
-    use_tabix: bool,
+    tabix: bool,
     cores: int,
     tmp_dir: str,
     verbose: str,
@@ -453,7 +447,7 @@ def extract(
     """
     setup_logger(verbose)
     with BamParser(
-        bam=bam, out=out, use_tabix=use_tabix, cores=cores, tmp_dir=tmp_dir
+        bam=bam, out=out, use_tabix=tabix, cores=cores, tmp_dir=tmp_dir
     ) as bp:
         bp.extract(
             site=site,
@@ -466,6 +460,56 @@ def extract(
             primary=primary,
             ignore_PCR=ignore_PCR,
         )
+
+
+# count subcommand
+@run.command("count", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "-a",
+    "--annotation",
+    "annotation",
+    type=click.Path(exists=True),
+    required=True,
+    help="flattened annotation file from `shoji annotation -h` or sliding window file from `shoji createSlidingWindows -h`",
+)
+@click.option(
+    "-i",
+    "--input",
+    "bed",
+    type=click.Path(exists=True),
+    required=True,
+    help="Extracted crosslink sites in BED format. See `shoji extract -h` for more details.",
+)
+@click.option(
+    "-o",
+    "--out",
+    "out",
+    type=click.Path(exists=False),
+    required=True,
+    help="Output file, crosslinksite counts per window. Note: This function outputs results only in Apache Parquet format",
+)
+@cores_option
+@tmp_option
+@verbose_option
+def count(
+    annotation: str, bed: str, out: str, cores: int, tmp_dir: str, verbose: str
+) -> None:
+    """
+    Count number of crosslink sites in a window.
+
+    Given an annotation file (see `shoji annotation -h` OR `shoji createSlidingWindows -h`) and
+    a bed file (see `shoji extract -h`) with crosslink sites, count the number of crosslink sites in each window.
+
+    Note: This command outputs results only in Apache Parquet format.
+
+    Basic usage for eCLIP data:
+    `shoji count -a <annotation> -i <counts> -o <out> -c 6`
+    """
+    setup_logger(verbose)
+    with Count(
+        annotation=annotation, bed=bed, out=out, cores=cores, tmp_dir=tmp_dir
+    ) as cp:
+        cp.count()
 
 
 if __name__ == "__main__":
