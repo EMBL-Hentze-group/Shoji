@@ -1,9 +1,7 @@
 cython
 numpy
-networkx
 poetry
 pysam
-xopen
 pyarrow
 sortedcontainers
 click
