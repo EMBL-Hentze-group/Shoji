@@ -450,8 +450,8 @@ def count_crosslinks(
             continue
         end_pos = bisect_right(crosslinks[ann.strand].pos, ann.end, lo=start_pos)
         if (end_pos == 0) or (start_pos == end_pos):
-            # ann.start is downstream of all crosslink positions
-            # or this window falls in between two crosslink sites
+            # ann.end is upstream of all crosslink positions
+            # or this window falls in between two crosslink sites, ie no crosslink sites in this window
             # skip checking this window
             continue
         indices: np.ndarray = np.where(
