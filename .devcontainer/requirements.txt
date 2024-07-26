@@ -8,3 +8,4 @@ pyarrow
 sortedcontainers
 click
 rich-click
+loguru

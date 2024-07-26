@@ -1,11 +1,9 @@
-from typing import Dict, List, Tuple, Optional, NamedTuple
 from bisect import bisect_left, bisect_right
+from typing import Dict, List, NamedTuple, Optional, Tuple
+
+from loguru import logger
 
 from .interval import Interval
-
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class Feature(NamedTuple):
@@ -131,8 +129,7 @@ class Gene:
         """
         if len(self._features) == 0:
             logger.warning(
-                "Gene %s does not have any features. Returning start and end co-ordinates",
-                self.gene_id,
+                f"Gene {self.gene_id} does not have any features. Returning start and end co-ordinates"
             )
             exon = Interval()
             exon.add(self.start, self.end)
@@ -177,8 +174,7 @@ class Gene:
     def tagged_exons(self) -> List[Feature]:
         if (len(self._features) == 0) or ("exon" not in self.features):
             logger.warning(
-                "Gene %s does not have any features. Returning start and end co-ordinates",
-                self.gene_id,
+                f"Gene {self.gene_id} does not have any features. Returning start and end co-ordinates"
             )
             return [
                 Feature(
@@ -261,7 +257,7 @@ class Gene:
     @property
     def introns(self) -> List[Tuple[int, int]]:
         if len(self._features) == 0:
-            logger.info("Gene %s does not have any features! No introns", self.gene_id)
+            logger.info(f"Gene {self.gene_id} does not have any features! No introns")
             return []
         try:
             introns = self.features["exon"].__invert__()
@@ -273,10 +269,10 @@ class Gene:
 
     def tagged_introns(self) -> List[Feature]:
         if (len(self._features) == 0) or ("exon" not in self.features):
-            logger.debug("Gene %s does not have any exons!", self.gene_id)
+            logger.debug(f"Gene {self.gene_id} does not have any exons!")
             return []
         if len(self.features["exon"]) == 1:
-            logger.debug("Gene %s has only one exon!", self.gene_id)
+            logger.debug(f"Gene {self.gene_id} has only one exon!")
             return []
         introns: Interval = ~self.features["exon"]
         index = self._get_index(len(introns))
@@ -299,22 +295,20 @@ class Gene:
 
     def remove_exon_overlapping_intron(self, exons: Interval) -> List[Feature]:
         if (len(self._features) == 0) or ("exon" not in self.features):
-            logger.debug("Gene %s does not have any exons!", self.gene_id)
+            logger.debug(f"Gene {self.gene_id} does not have any exons!")
             return []
         elif len(self.features["exon"]) == 1:
-            logger.debug("Gene %s has only one exon!", self.gene_id)
+            logger.debug(f"Gene {self.gene_id} has only one exon!")
             return []
         elif self.features["exon"] == exons:
-            logger.debug("Gene %s: no intron exon overlap", self.gene_id)
+            logger.debug(f"Gene {self.gene_id}: no intron exon overlap")
             return self.tagged_introns()
         introns: Interval = ~self.features["exon"]
         index = self._get_index(len(introns))
         split_introns = introns - exons
         if len(split_introns) == 0:
             logger.info(
-                "Skipping introns from gene: %s introns found: %i, complete overlap with exons of other genes",
-                self.gene_id,
-                len(introns),
+                f"Skipping introns from gene: {self.gene_id} introns found: {len(introns)}, complete overlap with exons of other genes",
             )
             return []
         final_exons: List[Feature] = []

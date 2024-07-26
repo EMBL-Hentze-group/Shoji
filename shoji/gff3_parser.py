@@ -1,18 +1,17 @@
-import logging
 import re
 from string import Template
 from typing import Callable, Dict, List, Optional, Set
-from sortedcontainers import SortedList
 
 import pyarrow as pa
+from loguru import logger
+from sortedcontainers import SortedList
+
 from . import pyarrow_reader as pr
 from .chrom_interval import ChromInterval
 from .gene import Feature, Gene
 from .interval import Interval
 from .output import output_writer
 from .tree import Node, get_genes
-
-logger = logging.getLogger(__file__)
 
 
 class GFF3parser:
@@ -112,24 +111,19 @@ class GFF3parser:
         chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
         strands: List[str] = gff3_pa.column("strand").unique().tolist()
         logger.info(
-            "Found %s intervals from %s chromosomes in %s",
-            f"{gff3_pa.shape[0]:,}",
-            f"{len(chroms):,}",
-            self.gff,
+            f"Found {gff3_pa.shape[0]:,} intervals from {len(chroms):,} chromosomes in self.gff"
         )
         with self._ow(self.out) as _fh:
             # _fh: Union[_io.TextIOWrapper,tempfile._TemporaryFileWrapper]
             for chrom in chroms:
-                logger.info("%s: parsing gene and feature data", chrom)
+                logger.info(f"{chrom}: parsing gene and feature data")
                 self._feats: List[Dict] = gff3_pa.filter(
                     pa.compute.field("seqname") == chrom
                 ).to_pylist()
                 # generate dependancy
                 self._gene_feature_dependancy()
                 logger.info(
-                    "%s: found %s intervals (genes + features)",
-                    chrom,
-                    f"{len(self._gene_tree):,}",
+                    f"{chrom}: found {len(self._gene_tree):,} intervals (genes + features)"
                 )
                 # reset chrom intervals
                 if self.split_intron:
@@ -147,6 +141,7 @@ class GFF3parser:
         Returns:
             pyarrow Table
         """
+        pa.set_cpu_count(1)  # set pyarrow cpu count
         gff3_reader = pr.Reader(self.gff)
         return gff3_reader.gff().drop_columns(["source", "score", "frame"])
 
@@ -213,14 +208,8 @@ class GFF3parser:
             if (f["type"] == feature_type) and self._is_leaf(uid):
                 genes: Set[str] = get_genes(self._gene_tree, uid)
                 if len(genes) == 0:
-                    logging.warning(
-                        "Cannot find 'gene' for feature %s--> %s:%i-%i(%s) with attributes %s! Skipping",
-                        f["type"],
-                        f["seqname"],
-                        f["start"],
-                        f["end"],
-                        f["strand"],
-                        f["attributes"],
+                    logger.warning(
+                        f"Cannot find 'gene' for feature {f['type']}--> {f['seqname']}:{f['start']}-{f['end']}({f['strand']}) with attributes {f['attributes']}! Skipping"
                     )
                     continue
                 for g in genes:
@@ -399,12 +388,9 @@ class GFF3parser:
             for intron in introns:
                 self._heap.add(intron)
         logger.info(
-            "# Genes: %s, Exons: %s, Introns: %s",
-            f"{len(self._gene_feature_map):,}",
-            f"{nexons:,}",
-            f"{nintrons:,}",
+            f"# Genes: {len(self._gene_feature_map):,}, Exons: {nexons:,}, Introns: {nintrons:,}"
         )
-        logger.info("# Genes with single feature or no features: %s", f"{one_exon:,}")
+        logger.info(f"# Genes with single feature or no features: {one_exon:,}")
 
     def _write(self, fh, chrom: str) -> None:
         """_write write to file

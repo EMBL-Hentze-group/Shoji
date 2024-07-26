@@ -1,13 +1,10 @@
-import logging
-
 import rich_click as click
-
+from loguru import logger
+import sys
 from .bam_parser import BamParser
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
 from .map_to_id import MapToId
-
-logger = logging.getLogger(__name__)
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -35,6 +32,17 @@ click.rich_click.COMMAND_GROUPS = {
 }
 
 
+def setup_logger(verbose) -> None:
+    logger.remove(0)
+    logger.add(
+        sys.stderr,
+        level=verbose,
+        format="|<level>{level: <8}</level>| {message}",
+        catch=False,
+        enqueue=True,
+    )
+
+
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option()
 def run() -> None:
@@ -45,6 +53,27 @@ def run() -> None:
 
     For help on each sub command run `shoji subcommand -h`
     """
+
+
+verbose_option = click.option(
+    "-v",
+    "--verbose",
+    "verbose",
+    type=click.Choice(["DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]),
+    default="INFO",
+    show_default=True,
+    help="Verbose level",
+)
+
+cores_option = click.option(
+    "-c",
+    "--cpus",
+    "cores",
+    type=int,
+    default=6,
+    show_default=True,
+    help="Number of cores to use for parallel processing",
+)
 
 
 # annotation subcommand
@@ -142,6 +171,7 @@ def run() -> None:
     show_default=True,
     help="If an intron overlaps exon of another genes, split this introns into separate bed entries after removing exon overlap",
 )
+@verbose_option
 def annotate(
     gff: str,
     out: str,
@@ -154,6 +184,7 @@ def annotate(
     gene_like_features: list,
     tabix: bool,
     split_intron: bool,
+    verbose: str,
 ) -> None:
     """
     Parse gff3 file and extract features to bed format.
@@ -166,6 +197,7 @@ def annotate(
 
     The default values used for --id, --parent, --gene_id, --gene_name, --gene_type are Gencode GFF3 attribute tags.
     """
+    setup_logger(verbose)
     parser = GFF3parser(
         gff=gff,
         out=out,
@@ -224,15 +256,8 @@ def annotate(
     show_default=True,
     help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
 )
-@click.option(
-    "-c",
-    "--cpus",
-    "cores",
-    type=int,
-    default=6,
-    show_default=True,
-    help="Number of cores to use for parallel processing",
-)
+@cores_option
+@verbose_option
 def create_sliding_windows(
     annotation: str,
     out: str,
@@ -240,6 +265,7 @@ def create_sliding_windows(
     step: int,
     tabix: bool,
     cores: int,
+    verbose: str,
 ) -> None:
     """
     Create sliding windows from flattened annotation.
@@ -248,6 +274,7 @@ def create_sliding_windows(
 
     Basic usage: `shoji creteSlidingWindows -a <annotation.bed> -o <out_w100_s20.bed> -w 100 -s 20 -c 6`
     """
+    setup_logger(verbose)
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
 
@@ -270,10 +297,12 @@ def create_sliding_windows(
     required=True,
     help="Output file, supports .gz compression. Region/window annotation mapped to a unique id",
 )
-def map_to_id(annotation: str, out: str) -> None:
+@verbose_option
+def map_to_id(annotation: str, out: str, verbose: str) -> None:
     """
     map entries in *name* column to unique ids and write in tab separated format
     """
+    setup_logger(verbose)
     mid = MapToId(annotation=annotation, out=out)
     mid.map_to_id()
 
@@ -383,15 +412,6 @@ def map_to_id(annotation: str, out: str) -> None:
     help="If the output suffix is *.gz*, use this flag to index the output bed file using tabix",
 )
 @click.option(
-    "-c",
-    "--cpus",
-    "cores",
-    type=int,
-    default=6,
-    show_default=True,
-    help="Number of cores to use for parallel processing",
-)
-@click.option(
     "-t",
     "--tmp",
     "tmp_dir",
@@ -400,6 +420,8 @@ def map_to_id(annotation: str, out: str) -> None:
     show_default=True,
     help="Temp. directory to save intermediate outputs. If not provided, creates and uses a temporary directory in --out parent directory",
 )
+@cores_option
+@verbose_option
 def extract(
     bam: str,
     out: str,
@@ -415,6 +437,7 @@ def extract(
     use_tabix: bool,
     cores: int,
     tmp_dir: str,
+    verbose: str,
 ) -> None:
     """
     Extract crosslink sites from bam file.
@@ -428,6 +451,7 @@ def extract(
     Basic usage for eCLIP data:
     `shoji extract -b <bam> -o <out.bed> -e 1 -s s -g -1 -c 6`
     """
+    setup_logger(verbose)
     with BamParser(
         bam=bam, out=out, use_tabix=use_tabix, cores=cores, tmp_dir=tmp_dir
     ) as bp:

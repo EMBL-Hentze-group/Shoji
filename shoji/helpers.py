@@ -1,9 +1,10 @@
-import logging
 from os import cpu_count
+from pathlib import Path
+from loguru import logger
+from typing import NamedTuple
 
-logger = logging.getLogger(__name__)
 """_summary_
-A collection of general helper functions
+A collection of general helper functions and modules
 """
 
 
@@ -16,18 +17,50 @@ def set_cores(ncores: int) -> int:
     if (ncores > allcores) and (allcores > 1):  # type: ignore
         setcores = max(allcores - 1, 1)  # type: ignore
         logger.warning(
-            "Give number of cores %i > number of cores detected %i. Setting cores to %i",
-            ncores,
-            allcores,
-            setcores,
+            f"Give number of cores {ncores} > number of cores detected {allcores}. Setting cores to {setcores}"
         )
         return setcores
     if allcores == 1:
         logger.warning(
-            "Available # cores: 1, resetting cores parameter from %i to 1",
-            ncores,
+            f"Available # cores: 1, resetting cores parameter from {ncores} to 1"
         )
         return 1
     else:
-        logger.info("Using %i cores out of %i...", ncores, allcores)
+        logger.info(f"Using {ncores} cores out of {allcores}...")
         return ncores
+
+
+def check_tabix(annotation) -> bool:
+    """_check_tabix check for tabix indices
+    Helper function to check for tabx indices (.csi or .tbi)
+    Returns:
+        bool
+    """
+    annpath = Path(annotation)
+    if (annpath.parent / (annpath.name + ".tbi")).exists() or (
+        annpath.parent / (annpath.name + ".csi")
+    ).exists():
+        logger.info(f"{annotation} is tabix indexed")
+        return True
+    return False
+
+
+class BedFeature(NamedTuple):
+    """_summary_
+    A named tuple representing a BED feature.
+    Args:
+        contig: The chromosome or contig where the bed feature is located.
+        start: The starting position of the bed feature.
+        end: The ending position of the bed feature.
+        name: The name of the bed feature.
+        score: The score of the bed feature.
+        strand: The strand of the bed feature.
+
+    """
+
+    contig: str
+    start: int
+    end: int
+    name: str
+    score: int
+    strand: int

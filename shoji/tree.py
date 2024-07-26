@@ -8,6 +8,17 @@ class Node:
     """
 
     def __init__(self, idx: str) -> None:
+        """
+        Initializes a new `Node` object.
+        
+        Parameters:
+            idx (str): Identifier, from "ID" attribute of GFF file.
+        
+        Attributes:
+            _parents (set[str]): A set of parent indices.
+            _children (set[str]): A set of child indices.
+        
+        """
         self.idx = idx
         self._parents: Set[str] = set()
         self._children: Set[str] = set()
