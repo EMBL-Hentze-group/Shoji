@@ -1,7 +1,10 @@
+from dataclasses import dataclass
 from os import cpu_count
 from pathlib import Path
+from typing import NamedTuple, List
+import numpy as np
+
 from loguru import logger
-from typing import NamedTuple
 
 """_summary_
 A collection of general helper functions and modules
@@ -64,3 +67,19 @@ class BedFeature(NamedTuple):
     name: str
     score: int
     strand: int
+
+
+@dataclass
+class Crosslinks:
+    """
+    A dataclass to store the strand specific crosslink counts for a given chromosome
+
+    Attributes:
+       counts (np.ndarray): A NumPy array containing two columns where the first column represents
+                            crosslink positions, and the second column contains corresponding counts
+                            of those positions. The structure is assumed to be a 2D array with shape-like [N, 2].
+       pos (List[int]): A sorted list of unique integers representing the distinct crosslink positions.
+    """
+
+    counts: np.ndarray  # first column crosslink pos, second column crosslink counts
+    pos: List[int]  # sorted list of crosslink positions
