@@ -390,7 +390,7 @@ def _start(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         Tuple[int, int], offset start coordinates
     """
     if aln.is_reverse:
-        start: int = aln.reference_end - offset
+        start: int = aln.reference_end - 1 - offset
         return start - 1, start
     # aln.reference_start: 0-based leftmost coordinate
     begin0 = aln.reference_start + offset
@@ -411,7 +411,7 @@ def _end(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         # aln.reference_start: 0-based leftmost coordinate
         begin0 = aln.reference_start + offset
         return begin0, begin0 + 1
-    start: int = aln.reference_end - offset
+    start: int = aln.reference_end - 1 - offset
     return start - 1, start
 
 
@@ -442,29 +442,69 @@ def _middle(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         # insertion, deletion or splice operations
         pairs: np.ndarray = np.array(aln.get_aligned_pairs())
         try:
-            qmid: np.ndarray = np.where(pairs[:, 0] == mid)[0]
+            aln_indx: np.ndarray = np.where(
+                (pairs[:, 0] != None) & (pairs[:, 1] != None)
+            )[0]
         except IndexError:
             return -1, -1
-        if len(qmid) > 1:
-            logger.warning(
-                f"{aln.reference_name}: Multiple mid points found for read {aln.query_name}!"
-            )
-        rmid = pairs[qmid[0], 1]
-        if rmid is None:
-            logger.warning(
-                f"{aln.reference_name}: Mid point for read {aln.query_name} is an insertion, finding the previous aligned position"
-            )
-            mid: int = qmid[0]
-            while mid > 0:
-                mid -= 1
-                rmid = pairs[mid, 1]
-                if rmid is not None:
-                    break
-            if rmid is None:
-                return -1, -1
-        if aln.is_reverse:
-            return rmid - 2, rmid - 1
-        return rmid - 1, rmid
+        if aln_indx.shape[0] <= 1:
+            return -1, -1
+        logger.debug(
+            f"{aln.query_name} cigar operations: {','.join([str(c) for c in cigars])}"
+        )
+        # redefine mid position
+        mid = int(Decimal(aln_indx.shape[0] / 2).quantize(0, ROUND_HALF_UP))
+        pairs = pairs[aln_indx]
+        mid_end = pairs[mid, 1]
+        mid_start = pairs[mid - 1, 1]
+        if mid_end - mid_start > 1:
+            if 3 in cigars:
+                logger.warning(
+                    f"{aln.reference_name}: {aln.query_name} {mid_start}-{mid_end} middle of the read could be a splice junction!"
+                )
+            if aln.is_reverse:
+                return _get_reverse_mid_pos(pairs, mid)
+            else:
+                return _get_forward_mid_pos(pairs, mid)
+        return mid_start, mid_end
+
+
+def _get_forward_mid_pos(pairs: np.ndarray, mid: int) -> Tuple[int, int]:
+    """_get_forward_mid_pos Helper function
+
+    Args:
+        pairs(np.ndarray): A 2D numpy array with aligned pair positions.
+                          The first element of each pair is considered for finding reverse positions.
+        mid (int): current middle of the aligned read.
+
+    Returns:
+        Tuple[int, int]: New middle of the read in BED format
+    """
+    while mid > 0:
+        if pairs[mid, 1] - pairs[mid - 1, 1] == 1:
+            return mid - 1, mid
+        else:
+            mid -= 1
+    return -1, -1
+
+
+def _get_reverse_mid_pos(pairs: np.ndarray, mid: int) -> Tuple[int, int]:
+    """_get_reverse_mid_pos Helper function
+
+    Args:
+        pairs(np.ndarray): A 2D numpy array with aligned pair positions.
+                          The first element of each pair is considered for finding reverse positions.
+        mid (int): current middle of the aligned read.
+
+    Returns:
+        Tuple[int, int]: New middle of the read in BED format
+    """
+    while mid < pairs.shape[0]:
+        if pairs[mid, 1] - pairs[mid - 1, 1] == 1:
+            return mid - 1, mid
+        else:
+            mid += 1
+    return -1, -1
 
 
 def _insertion(aln: pysam.AlignedSegment) -> List[Tuple[int, int]]:
