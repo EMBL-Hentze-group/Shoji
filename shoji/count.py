@@ -2,7 +2,6 @@ import multiprocessing as mp
 import tempfile
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from shutil import copyfile, rmtree
@@ -16,7 +15,7 @@ from loguru import logger
 from pyarrow import dataset as pds
 from pyarrow.dataset import ParquetFileFragment
 
-from .helpers import BedFeature, check_tabix, set_cores
+from .helpers import BedFeature, check_tabix, set_cores, Crosslinks
 from .pyarrow_reader import PartionedParquetReader
 
 
@@ -70,7 +69,7 @@ class Count:
         # bed/count reader
         self._bed_reader: Callable
         # bed/count paritioned fragments
-        self._bed_fragments: Dict[str, ParquetFileFragment]
+        self._bed_fragments: Dict[str, ParquetFileFragment] = {}
 
     def __enter__(self) -> "Count":
         self._check_out_suffix()
@@ -323,22 +322,6 @@ def fragment_reader(
             )
 
 
-@dataclass
-class Crosslinks:
-    """
-    A dataclass to store the strand specific crosslink counts for a given chromosome
-
-    Attributes:
-       counts (np.ndarray): A NumPy array containing two columns where the first column represents
-                            crosslink positions, and the second column contains corresponding counts
-                            of those positions. The structure is assumed to be a 2D array with shape-like [N, 2].
-       pos (List[int]): A sorted list of unique integers representing the distinct crosslink positions.
-    """
-
-    counts: np.ndarray  # first column crosslink pos, second column crosslink counts
-    pos: List[int]  # sorted list of crosslink positions
-
-
 def _crosslink_counter(bed_fn: Callable, chrom: str) -> Dict[str, Crosslinks]:
     """_crosslink_counter Helper function
 
@@ -346,12 +329,12 @@ def _crosslink_counter(bed_fn: Callable, chrom: str) -> Dict[str, Crosslinks]:
 
     Args:
         bed_fn (Callable): A callable that accepts a string representing
-            a chromosome and yields BED entry entries for this chromosome.
+                            a chromosome and yields BED entry entries for this chromosome.
         chrom (str): The chromosome identifier to analyze crosslink events on.
 
     Returns:
         Dict[str, Crosslinks]: A dictionary mapping strand orientation ('+', '-') to a Crosslinks
-            object containing the count of crosslink events at each position and their corresponding positions.
+                                object containing the count of crosslink events at each position and their corresponding positions.
 
     Raises:
         RuntimeError: If no crosslink sites are found for the specified chromosome in the input files,
