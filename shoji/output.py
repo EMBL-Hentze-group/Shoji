@@ -10,7 +10,7 @@ from loguru import logger
 from pysam import tabix_compress, tabix_index
 
 
-def output_writer(out: str, use_tabix: bool, preset: str) -> Callable:
+def output_writer(out: str, use_tabix: bool, preset: str = "bed") -> Callable:
     """output_writer output writer
     Output writer for plain text, tabix indexed gzip or compressions supported by xopen
 
