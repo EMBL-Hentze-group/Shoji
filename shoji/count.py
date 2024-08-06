@@ -26,6 +26,7 @@ class Count:
         bed: str,
         out: str,
         cores: int,
+        sample_name: Optional[str] = None,
         tmp_dir: Optional[str] = None,
     ) -> None:
         """__init__ _summary_
@@ -35,6 +36,7 @@ class Count:
             bed: str, Path to the bed file in BED format.
             out: str, Path to the output directory.
             cores: int, Number of cores to use for parallelization
+            sample_name: str, sample name to use. If none provided, sample name will be inferred from bed file name.
             tmp_dir: Optional, str, Path to a temporary directory for intermediate files. If not provided, a temporary directory will be automatically created within the output directory
 
         Raises:
@@ -54,6 +56,15 @@ class Count:
             self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
         self._tmp.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using {str(self._tmp)} as temp. directory")
+        if sample_name is None:
+            bpath: Path = Path(bed)
+            self.sample_name = bpath.name.replace("".join(bpath.suffixes), "")
+            logger.warning(
+                f"No sample name provided. Using '{self.sample_name}' inferred from file name '{bed}' as sample name"
+            )
+        else:
+            self.sample_name = sample_name
+            logger.info(f"Using '{self.sample_name}' as sample name for '{bed}'")
         # annotation handler and reader
         self._annh: Union[pysam.TabixFile, PartionedParquetReader]
         # boolean
@@ -196,20 +207,20 @@ class Count:
                 "start": pa.uint32(),
                 "end": pa.uint32(),
                 "gene_id": pa.string(),
-                "uniq_id": pa.string(),
+                "annotation": pa.map_(pa.string(), pa.string()),
                 "strand": pa.string(),
-                "positions": pa.list_(pa.uint32()),
-                "counts": pa.list_(pa.uint32()),
+                "sample": pa.string(),
+                "pos_counts": pa.map_(pa.uint32(), pa.uint32()),
             },
             metadata={
                 "chrom": "chromosome name",
                 "start": "window start position",
                 "end": "window end position",
                 "gene_id": "gene id",
-                "uniq_id": "window unique id",
+                "annotation": "key: feature names, values: feature attributes",
                 "strand": "strand info",
-                "positions": "positions with crosslink counts",
-                "counts": "crosslink count on positions",
+                "sample": "sample name",
+                "pos_counts": "keys: positions, values: crosslink counts",
             },
         )
         tmp_dict: Dict[str, Path] = {}  # tmp file dictionary
@@ -228,7 +239,7 @@ class Count:
                 tmp_dict[chrom] = tmp_file
                 pool.apply_async(
                     count_crosslinks,
-                    args=(ann_fn, bed_fn, chrom, schema, tmp_file, 0, 5),
+                    args=(ann_fn, bed_fn, chrom, schema, tmp_file, self.sample_name),
                 )
             pool.close()
             pool.join()
@@ -372,8 +383,7 @@ def count_crosslinks(
     chrom: str,
     schema: pa.Schema,
     output: Path,
-    gene_id_index: int = 0,
-    uniq_id_index: int = 5,
+    sample_name: str,
 ):
     """count_crosslinks count crosslinks for a chromosome
      Count crosslinks within specified regions and annotate them with corresponding gene information.
@@ -384,6 +394,7 @@ def count_crosslinks(
         chrom (str): The chromosome for which to process the data.
         schema (pa.Schema): An Arrow Schema defining the structure of the output table.
         output (Path): The file path or name where the results will be written.
+        sample_name (str): The current sample name. Used as a column in output file
         gene_id_index (int, optional): Attribute index within name column at which to find the gene ID. Defaults to 0.
         uniq_id_index (int, optional): Attribute index within the name column at which to find the unique identifier. Defaults to 5.
 
@@ -403,10 +414,10 @@ def count_crosslinks(
         "start",
         "end",
         "gene_id",
-        "uniq_id",
+        "annotation",
         "strand",
-        "positions",
-        "counts",
+        "sample",
+        "pos_counts",
     }
     if expected_cols != set(schema.names):
         raise RuntimeError(
@@ -444,21 +455,36 @@ def count_crosslinks(
         if len(indices) == 0:
             continue
         name_dat: List[str] = ann.name.split("@")
-        if len(name_dat) < (uniq_id_index + 1):
+        nr_region, total_nr_region = name_dat[4].split("/")
+        if len(name_dat) < 7:
             logger.warning(
-                f"{chrom} Window {ann.start}:{ann.end}({ann.strand}) does not have enough attributes seperated by '@' in name column: {ann.name}. Expected at leat {(uniq_id_index+1)} attributes!"
+                f"{chrom} Window {ann.start}:{ann.end}({ann.strand}) does not have enough attributes seperated by '@' in name column: {ann.name}. Expected at least 7 attributes!"
             )
             continue
         out_dict["chrom"].append(chrom)
         out_dict["start"].append(ann.start)
         out_dict["end"].append(ann.end)
-        out_dict["gene_id"].append(name_dat[gene_id_index])
-        out_dict["uniq_id"].append(name_dat[uniq_id_index])
+        out_dict["gene_id"].append(name_dat[0])
         out_dict["strand"].append(ann.strand)
-        out_dict["positions"].append(
-            (crosslinks[ann.strand].counts[indices, 0]).tolist()
+        out_dict["sample"].append(sample_name)
+        out_dict["pos_counts"].append(
+            list(map(tuple, crosslinks[ann.strand].counts[indices]))
         )
-        out_dict["counts"].append((crosslinks[ann.strand].counts[indices, 1]).tolist())
+        annotation: Dict[str, str] = {
+            "gene_name": name_dat[1],
+            "gene_type": name_dat[2],
+            "feature": name_dat[3],
+            "nr_of_region": nr_region,
+            "total_region": total_nr_region,
+            "uniq_id": name_dat[5],
+        }
+        if len(name_dat) == 7:
+            annotation["window_number"] = name_dat[6]
+        out_dict["annotation"].append(annotation)
+        # out_dict["positions"].append(
+        #     (crosslinks[ann.strand].counts[indices, 0]).tolist()
+        # )
+        # out_dict["counts"].append((crosslinks[ann.strand].counts[indices, 1]).tolist())
         used += 1
     if len(out_dict) > 0:
         logger.info(

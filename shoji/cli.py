@@ -1,3 +1,4 @@
+from email.policy import default
 import rich_click as click
 from loguru import logger
 import sys
@@ -488,11 +489,25 @@ def extract(
     required=True,
     help="Output file, crosslinksite counts per window. Note: This function outputs results only in Apache Parquet format",
 )
+@click.option(
+    "-n",
+    "--name",
+    "sample_name",
+    type=click.STRING,
+    default=None,
+    help="Sample name to use as a column in the output file. If not provided, the sample name will be inferred from the input file.",
+)
 @cores_option
 @tmp_option
 @verbose_option
 def count(
-    annotation: str, bed: str, out: str, cores: int, tmp_dir: str, verbose: str
+    annotation: str,
+    bed: str,
+    out: str,
+    sample_name: str,
+    cores: int,
+    tmp_dir: str,
+    verbose: str,
 ) -> None:
     """
     Count number of crosslink sites in a window.
@@ -507,7 +522,12 @@ def count(
     """
     setup_logger(verbose)
     with Count(
-        annotation=annotation, bed=bed, out=out, cores=cores, tmp_dir=tmp_dir
+        annotation=annotation,
+        bed=bed,
+        out=out,
+        cores=cores,
+        tmp_dir=tmp_dir,
+        sample_name=sample_name,
     ) as cp:
         cp.count()
 
