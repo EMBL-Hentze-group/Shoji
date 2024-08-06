@@ -101,7 +101,7 @@ tmp_option = click.option(
 # annotation subcommand
 @run.command("annotation", context_settings=CONTEXT_SETTINGS)
 @click.option(
-    "-g",
+    "-a",
     "--gff3",
     "gff",
     type=click.Path(exists=True),
@@ -282,7 +282,7 @@ def create_sliding_windows(
 
     See `shoji annotate -h` for annotation file creation
 
-    Basic usage: `shoji creteSlidingWindows -a <annotation.bed> -o <out_w100_s20.bed> -w 100 -s 20 -c 6`
+    Basic usage: `shoji createSlidingWindows -a <annotation.bed> -o <out_w100_s20.bed> -w 100 -s 20 -c 6`
     """
     setup_logger(verbose)
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
