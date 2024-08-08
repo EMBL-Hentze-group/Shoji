@@ -204,7 +204,7 @@ class Count:
         schema: pa.Schema = pa.schema(
             {
                 "chrom": pa.string(),
-                "start": pa.uint32(),
+                "begin": pa.uint32(),
                 "end": pa.uint32(),
                 "gene_id": pa.string(),
                 "annotation": pa.map_(pa.string(), pa.string()),
@@ -214,7 +214,7 @@ class Count:
             },
             metadata={
                 "chrom": "chromosome name",
-                "start": "window start position",
+                "begin": "window start position",
                 "end": "window end position",
                 "gene_id": "gene id",
                 "annotation": "key: feature names, values: feature attributes",
@@ -411,7 +411,7 @@ def count_crosslinks(
     """
     expected_cols: Set[str] = {
         "chrom",
-        "start",
+        "begin",
         "end",
         "gene_id",
         "annotation",
@@ -462,7 +462,7 @@ def count_crosslinks(
             )
             continue
         out_dict["chrom"].append(chrom)
-        out_dict["start"].append(ann.start)
+        out_dict["begin"].append(ann.start)
         out_dict["end"].append(ann.end)
         out_dict["gene_id"].append(name_dat[0])
         out_dict["strand"].append(ann.strand)
