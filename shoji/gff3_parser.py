@@ -78,6 +78,9 @@ class GFF3parser:
         self._heap: SortedList = SortedList()
         # output write to write outputs
         self._ow = output_writer(self.out, use_tabix=self.use_tabix, preset="bed")
+        # hack: in some gff3 files gene ids are repeated for paralogs (mainly in X and Y chromosomes.)
+        # in such cases avoid adding the same gene id for multiple genes
+        self._gene_ids_visited: Dict[str, int] = {}
 
     def _interval_appender(self) -> Callable:
         """_interval_appender
@@ -326,9 +329,19 @@ class GFF3parser:
             # if loop here is far more elegant than try except block
             self._gene_feature_map[idx] = Gene()
         try:
-            self._gene_feature_map[idx].gene_id = attribs[self.gene_id]
+            gene_id: str = attribs[self.gene_id]
         except KeyError as k:
             raise KeyError(f"Cannot find 'gene_id' for ID {idx}! {k}") from k
+        if gene_id in self._gene_ids_visited:
+            n = self._gene_ids_visited[gene_id] + 1
+            self._gene_ids_visited[gene_id] = n
+            logger.warning(
+                f"Found duplicate gene id {gene_id} in {chrom}, new gene id is {gene_id}_{chrom}_{n} "
+            )
+            gene_id = f"{gene_id}_{chrom}_{n}"
+        else:
+            self._gene_ids_visited[gene_id] = 1
+        self._gene_feature_map[idx].gene_id = gene_id
         self._gene_feature_map[idx].gene_name = self._attrib_getter(
             attribs, self.gene_name, attribs[self.gene_id]
         )
