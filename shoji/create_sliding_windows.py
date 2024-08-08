@@ -159,14 +159,20 @@ def tabix_sw_worker(
     with pysam.TabixFile(annotation) as _annw, wwriter(out) as _ow:
         for feature in _annw.fetch(chrom, parser=pysam.asBed()):
             fc += 1
-            for wi, (wstart, wend) in enumerate(
-                _sliding_windows(feature.start, feature.end, step, size)
+            sliding_windows: List[Tuple[int, int]] = _sliding_windows(
+                feature.start, feature.end, step, size
+            )
+            if len(sliding_windows) == 0:
+                logger.warning(f"{chrom}:{feature.start}-{feature.end} has no windows!")
+                continue
+            for i, wi in enumerate(
+                _window_indexer(feature.strand, len(sliding_windows))
             ):
                 heap.add(
                     (
-                        wstart,
-                        wend,
-                        feature.name + f"W{wi+1:05}@{wi+1}",
+                        sliding_windows[i][0],
+                        sliding_windows[i][1],
+                        feature.name + f"W{wi:05}@{wi}",
                         int(feature.score),
                         feature.strand,
                     )
@@ -204,19 +210,24 @@ def parquet_sw_worker(
     with wwriter(out) as _ow:
         for feature in fragment.to_table().to_pylist():
             fc += 1  # feature count
-            for wi, (wstart, wend) in enumerate(
-                _sliding_windows(
-                    feature["chromStart"],
-                    feature["chromEnd"],
-                    step,
-                    size,
+            sliding_windows: List[Tuple[int, int]] = _sliding_windows(
+                feature["chromStart"],
+                feature["chromEnd"],
+                step,
+                size,
+            )
+            if len(sliding_windows) == 0:
+                logger.warning(
+                    f"{chrom}:{feature['chromStart']}-{feature['chromEnd']} has no windows!"
                 )
-            ):
+                continue
+            indexer: range = _window_indexer(feature["strand"], len(sliding_windows))
+            for i, wi in enumerate(indexer):
                 heap.add(
                     (
-                        wstart,
-                        wend,
-                        feature["name"] + f"W{wi+1:05}@{wi+1}",
+                        sliding_windows[i][0],
+                        sliding_windows[i][1],
+                        feature["name"] + f"W{wi:05}@{wi}",
                         int(feature["score"]),
                         feature["strand"],
                     )
@@ -256,3 +267,19 @@ def _sliding_windows(
     elif windows[-1][1] < end:
         windows.append((windows[-1][1], end))
     return windows
+
+
+def _window_indexer(strand: str, window_length: int) -> range:
+    """_window_indexer Helper function
+    Generate window indexing corresponing to window length, strand
+    Args:
+        strand: str, feature strand
+        window_length: int, length of total windows in this feature
+
+    Returns:
+        Callable
+    """
+    if strand == "-":
+        return range(window_length, 0, -1)
+    else:
+        return range(1, window_length + 1, 1)
