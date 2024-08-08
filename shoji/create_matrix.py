@@ -223,7 +223,7 @@ def create_matrices(
     ann_header: List[str] = [
         "unique_id",
         "chromosome",
-        "start",
+        "begin",
         "end",
         "strand",
         "gene_id",
