@@ -456,9 +456,9 @@ def count_crosslinks(
             continue
         name_dat: List[str] = ann.name.split("@")
         nr_region, total_nr_region = name_dat[4].split("/")
-        if len(name_dat) < 7:
+        if len(name_dat) < 6:
             logger.warning(
-                f"{chrom} Window {ann.start}:{ann.end}({ann.strand}) does not have enough attributes seperated by '@' in name column: {ann.name}. Expected at least 7 attributes!"
+                f"{chrom} Window {ann.start}:{ann.end}({ann.strand}) does not have enough attributes seperated by '@' in name column: {ann.name}. Expected at least 6 attributes!"
             )
             continue
         out_dict["chrom"].append(chrom)
