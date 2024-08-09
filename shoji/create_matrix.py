@@ -1,8 +1,10 @@
+from ast import Call
+import multiprocessing as mp
 import tempfile
 from itertools import chain
 from pathlib import Path
 from shutil import rmtree
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -21,7 +23,8 @@ class CreateMatrix:
         in_dir: str,
         annotation: str,
         out: str,
-        cores: int,
+        max_out: Optional[str] = None,
+        cores: int = 1,
         prefix: Optional[str] = None,
         suffix: Optional[str] = ".parquet",
         tmp_dir: Optional[str] = None,
@@ -29,10 +32,9 @@ class CreateMatrix:
         self.in_dir = in_dir
         self.annotation = annotation
         self.out = out
+        self.max_out = max_out
         self.prefix = prefix
         self.suffix = suffix
-        self.cores: int = set_cores(cores)
-        pa.set_cpu_count(self.cores)
         if tmp_dir is None:
             self._tmp = Path(self.out).parent / next(tempfile._get_candidate_names())
         else:
@@ -51,6 +53,16 @@ class CreateMatrix:
             logger.warning(f"Re-writing file {self.annotation}")
         if Path(self.out).exists():
             logger.warning(f"Re-writing file {self.out}")
+        if self.max_out is None:
+            logger.info("No output for max count matrix.")
+        elif Path(self.max_out).exists():
+            logger.warning(f"Re-writing file {self.max_out}")
+        # set cores
+        self.cores: int = set_cores(cores)
+        pa.set_cpu_count(self.cores)
+        # pa_cores: int = max(1, int(self.cores / 2))
+        # pa.set_cpu_count(pa_cores)
+        # self._rest_cores = max(1, self.cores - pa_cores)
 
     def __enter__(self) -> "CreateMatrix":
         self._glob_count_files()
@@ -92,9 +104,7 @@ class CreateMatrix:
         Returns:
             None
         """
-        count_ds = ds.dataset(self._count_files, format="parquet").sort_by(
-            [("chrom", "ascending"), ("start", "ascending")]
-        )
+        count_ds = ds.dataset(self._count_files, format="parquet").sort_by("chrom")
         # sample names
         self._samples: List[str] = sorted(
             count_ds.to_table()["sample"].unique().to_pylist()
@@ -127,7 +137,7 @@ class CreateMatrix:
             partitioning=partition_schema,
         )
 
-    def create_matrices(self):
+    def create_matrices(self, allow_duplicates: bool = False):
         partitioned_ds = ds.dataset(
             str(self._partitioned_ds), format="parquet", partitioning="hive"
         )
@@ -137,6 +147,10 @@ class CreateMatrix:
             fragments[(partition_dict["chrom"], partition_dict["strand"])] = fragment
         annotation_suffix: str = Path(self.annotation).suffix
         out_suffix: str = Path(self.out).suffix
+        if self.max_out is None:
+            max_suffix = None
+        else:
+            max_suffix = Path(self.out).suffix
         annotation_tmp, out_tmp, max_tmp = {}, {}, {}
         first: bool = True
         for chrom in sorted(fragments.keys()):
@@ -147,8 +161,15 @@ class CreateMatrix:
             out_file: str = str(
                 self._tmp / f"{next(tempfile._get_candidate_names())}{out_suffix}"
             )
+            if self.max_out is None:
+                max_file = None
+            else:
+                max_file = str(
+                    self._tmp / f"{next(tempfile._get_candidate_names())}{max_suffix}"
+                )
             annotation_tmp[f"{chrom[0]}{chrom[1]}"] = ann_file
             out_tmp[f"{chrom[0]}{chrom[1]}"] = out_file
+            max_tmp[f"{chrom[0]}{chrom[1]}"] = max_file
             create_matrices(
                 fragment=fragments[chrom],
                 chrom=chrom[0],
@@ -156,7 +177,10 @@ class CreateMatrix:
                 samples=self._samples,
                 ann=ann_file,
                 sums=out_file,
+                maxs=max_file,
                 first=first,
+                is_windowed=self._is_windowed,
+                allow_duplicates=allow_duplicates,
             )
             first = False
         # accumulate and write annotations
@@ -165,6 +189,10 @@ class CreateMatrix:
         # accumulate and write window counts
         logger.info(f"writing counts to {self.out}")
         general_accumulator(out_tmp, self.out)
+        # accumulate and write max counts
+        if self.max_out is not None:
+            logger.info(f"writing max counts to {self.max_out}")
+            general_accumulator(max_tmp, self.max_out)
 
 
 class WindowCount:
@@ -219,6 +247,7 @@ def create_matrices(
     maxs: Optional[str] = None,
     first: bool = False,
     is_windowed: bool = False,
+    allow_duplicates: bool = False,
 ):
     ann_header: List[str] = [
         "unique_id",
@@ -237,30 +266,35 @@ def create_matrices(
         ann_header.append("window_number")
     # annotation handler
     ann_writer: Callable = output_writer(out=ann, use_tabix=False)
-    # sum handlser
+    # sum handler
     sum_writer: Callable = output_writer(out=sums, use_tabix=False)
     # counts table
-    counts: pa.Table = fragment.to_table()
+    counts: pa.Table = fragment.to_table().sort_by("begin")
     # genes
     genes: pa.StringArray = counts["gene_id"].unique()
     logger.debug(f"{fragment}")
     logger.info(f"Found {len(genes):,} genes in {chrom} {strand}")
+    # max counts
+    max_counts: List[List[str]] = []
+    if allow_duplicates:
+        row_fn: Callable = all_rows
+    else:
+        row_fn: Callable = pick_rows
     with ann_writer(ann) as aw, sum_writer(sums) as sw:
         if first:
             aw.write("\t".join(ann_header) + "\n")
             sw.write("\t".join(["unique_id"] + samples) + "\n")
         for gene in genes:
-            per_gene = counts.filter(pc.field("gene_id") == gene)
             row_map: Dict[Tuple[int, int], WindowCount] = {}
-            for row in per_gene.to_pylist():
-                uid = (row["start"], row["end"])
+            for row in counts.filter(pc.field("gene_id") == gene).to_pylist():
+                uid = (row["begin"], row["end"])
                 try:
                     row_map[uid].add(row["sample"], row["pos_counts"])
                 except KeyError:
                     row_map[uid] = WindowCount()
                     row_map[uid].add(row["sample"], row["pos_counts"])
                     row_map[uid].annotations = dict(row["annotation"])
-            uniq_rows: List[Tuple[int, int]] = pick_rows(row_map=row_map, strand=strand)
+            uniq_rows: List[Tuple[int, int]] = row_fn(row_map=row_map, strand=strand)
             for ur in uniq_rows:
                 annotation: List[str] = [
                     row_map[ur].annotations["uniq_id"],
@@ -275,19 +309,56 @@ def create_matrices(
                     row_map[ur].annotations["nr_of_region"],
                     row_map[ur].annotations["total_region"],
                 ]
+                if is_windowed:
+                    annotation.append(row_map[ur].annotations["window_number"])
                 aw.write("\t".join(annotation) + "\n")
                 window_sums: List[str] = [row_map[ur].annotations["uniq_id"]]
+                window_maxs: List[str] = [row_map[ur].annotations["uniq_id"]]
                 for sample in samples:
                     if sample not in row_map[ur].window_sum:
                         window_sums.append("0")
+                        window_maxs.append("0")
                         continue
                     window_sums.append(str(row_map[ur].window_sum[sample]))
+                    window_maxs.append(str(row_map[ur].window_max[sample]))
                 sw.write("\t".join(window_sums) + "\n")
+                max_counts.append(window_maxs)
+    if maxs is not None:
+        max_writer: Callable = output_writer(out=maxs, use_tabix=False)
+        with max_writer(maxs) as mw:
+            if first:
+                mw.write("\t".join(["unique_id"] + samples) + "\n")
+            for m in max_counts:
+                mw.write("\t".join(m) + "\n")
+
+
+def all_rows(
+    row_map: Dict[Tuple[int, int], WindowCount], strand: str
+) -> List[Tuple[int, int]]:
+    """all_rows Helper function
+    Return all rows. Proxy function for pick_rows
+    Args:
+        row_map (Dict[Tuple[int, int], WindowCount]): Intervals with count data
+        strand (str): gene strand
+
+    Returns:
+        List[Tuple[int, int]]: list of non overlapping intervals
+    """
+    return sorted(row_map.keys())
 
 
 def pick_rows(
     row_map: Dict[Tuple[int, int], WindowCount], strand: str
 ) -> List[Tuple[int, int]]:
+    """pick_rows Helper function
+    From overlapping intervals with identical crosslink data, pick one
+    Args:
+        row_map (Dict[Tuple[int, int], WindowCount]): Intervals with count data
+        strand (str): gene strand
+
+    Returns:
+        List[Tuple[int, int]]: list of non overlapping intervals
+    """
     rows: List[Tuple[int, int]] = []
     if strand == "-":
         _fn: Callable = max
@@ -310,6 +381,16 @@ def pick_rows(
 def _row_picker(
     rows: List[Tuple[int, int]], picker_fn: Callable
 ) -> List[Tuple[int, int]]:
+    """_row_picker Helper function to pick rows from a list of tuples
+    From a list intervals, for the overlapping set of intervals pick
+    the most 5' interval depending on the strand.
+    Args:
+        rows (List[Tuple[int, int]]): list of intervals
+        picker_fn (Callable): min or max function
+
+    Returns:
+        List[Tuple[int, int]]: list of non overlapping intervals
+    """
     uniq_rows: List[Tuple[int, int]] = []
     irows = iter(sorted(rows))
     try:
