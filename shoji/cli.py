@@ -289,32 +289,32 @@ def create_sliding_windows(
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
 
 
-# mapToId subcommand
-@run.command("mapToId", context_settings=CONTEXT_SETTINGS)
-@click.option(
-    "-a",
-    "--annotation",
-    "annotation",
-    type=click.Path(exists=True),
-    required=True,
-    help="flattened annotation file from `shoji annotation -h` or sliding window file from `shoji createSlidingWindows -h`",
-)
-@click.option(
-    "-o",
-    "--out",
-    "out",
-    type=click.Path(exists=False),
-    required=True,
-    help="Output file, supports .gz compression. Region/window annotation mapped to a unique id",
-)
-@verbose_option
-def map_to_id(annotation: str, out: str, verbose: str) -> None:
-    """
-    map entries in *name* column to unique ids and write in tab separated format
-    """
-    setup_logger(verbose)
-    mid = MapToId(annotation=annotation, out=out)
-    mid.map_to_id()
+# # mapToId subcommand
+# @run.command("mapToId", context_settings=CONTEXT_SETTINGS)
+# @click.option(
+#     "-a",
+#     "--annotation",
+#     "annotation",
+#     type=click.Path(exists=True),
+#     required=True,
+#     help="flattened annotation file from `shoji annotation -h` or sliding window file from `shoji createSlidingWindows -h`",
+# )
+# @click.option(
+#     "-o",
+#     "--out",
+#     "out",
+#     type=click.Path(exists=False),
+#     required=True,
+#     help="Output file, supports .gz compression. Region/window annotation mapped to a unique id",
+# )
+# @verbose_option
+# def map_to_id(annotation: str, out: str, verbose: str) -> None:
+#     """
+#     map entries in *name* column to unique ids and write in tab separated format
+#     """
+#     setup_logger(verbose)
+#     mid = MapToId(annotation=annotation, out=out)
+#     mid.map_to_id()
 
 
 # extract subcommand
@@ -530,6 +530,39 @@ def count(
         sample_name=sample_name,
     ) as cp:
         cp.count()
+
+# create matrix subcommand
+@run.command("create_matrices", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "-i",
+    "--input_dir",
+    "input_dir",
+    type=click.Path(exists=True, file_okay=False,dir_okay=True),
+    required=True,
+    help="Input directory containing the output of shoji count, see `shoji count -h` for details",
+)
+@click.option(
+    "-p",
+    "--prefix",
+    "prefix",
+    type=str,
+    default=None,
+    show_default=True,
+    help="Prefix to filter count files in *in_dir*",
+)
+@click.option(
+    "-s",
+    "--suffix",
+    "suffix",
+    type=str,
+    default=".parquet",
+    show_default=True,
+    help="Suffix to filter count files in *in_dir*. Either *--prefix* or *--suffix* MUST be provided",
+)
+
+@cores_option
+@tmp_option
+@verbose_option
 
 
 if __name__ == "__main__":
