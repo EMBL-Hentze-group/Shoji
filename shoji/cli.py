@@ -1,12 +1,14 @@
-from email.policy import default
+import sys
+from typing import Optional
+
 import rich_click as click
 from loguru import logger
-import sys
+
 from .bam_parser import BamParser
+from .count import Count
+from .create_matrix import CreateMatrix
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
-from .map_to_id import MapToId
-from .count import Count
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -32,7 +34,7 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Counting",
-            "commands": ["count"],
+            "commands": ["count", "createMatrix"],
         },
     ]
 }
@@ -531,13 +533,14 @@ def count(
     ) as cp:
         cp.count()
 
+
 # create matrix subcommand
-@run.command("create_matrices", context_settings=CONTEXT_SETTINGS)
+@run.command("createMatrix", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "-i",
     "--input_dir",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False,dir_okay=True),
+    "in_dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
     required=True,
     help="Input directory containing the output of shoji count, see `shoji count -h` for details",
 )
@@ -559,10 +562,76 @@ def count(
     show_default=True,
     help="Suffix to filter count files in *in_dir*. Either *--prefix* or *--suffix* MUST be provided",
 )
-
+@click.option(
+    "-a",
+    "--annotation",
+    "annotation",
+    type=str,
+    required=True,
+    help="Output filename for trimmed annotations",
+)
+@click.option(
+    "-o",
+    "--output",
+    "out",
+    type=str,
+    required=True,
+    help="Output filename for aggregated crosslink count per window matrix",
+)
+@click.option(
+    "-m",
+    "--max",
+    "max_out",
+    type=str,
+    default=None,
+    show_default=True,
+    help="Optional output. Output filename for max. crosslink site per window matrix",
+)
+@click.option(
+    "--allow_duplicates",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Default behavior: If adjacent overlapping windows have same crosslink counts across all samples, write only the most 5' widow to output file. Use this flag disable this and to write all windows",
+)
 @cores_option
 @tmp_option
 @verbose_option
+def create_matrix(
+    in_dir: str,
+    annotation: str,
+    out: str,
+    max_out: Optional[str] = None,
+    prefix: Optional[str] = None,
+    suffix: Optional[str] = None,
+    allow_duplicates: bool = False,
+    cores: int = 1,
+    tmp_dir: Optional[str] = None,
+    verbose: str = "INFO",
+) -> None:
+    """
+    create R friendly output matrices
+
+    Glob all output files from `shoji count` in the given directory using the given prefix and/or suffix and create
+
+    (i) annotation file for all the windows present in any one of the input files.
+    (ii) aggregated crosslink count matrix for all windows across all samples and
+    (iii) Optional: crosslink count matrix with max count per window per sample
+    """
+    if prefix is None and suffix is None:
+        raise click.ClickException("Either --prefix or --suffix must be specified")
+    setup_logger(verbose)
+    with CreateMatrix(
+        in_dir=in_dir,
+        annotation=annotation,
+        out=out,
+        max_out=max_out,
+        prefix=prefix,
+        suffix=suffix,
+        cores=cores,
+        tmp_dir=tmp_dir,
+    ) as cm:
+        cm.create_matrices(allow_duplicates=allow_duplicates)
 
 
 if __name__ == "__main__":
