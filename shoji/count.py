@@ -203,13 +203,13 @@ class Count:
         # schema for output file
         schema: pa.Schema = pa.schema(
             {
-                "chrom": pa.string(),
+                "chrom": pa.large_string(),
                 "begin": pa.uint32(),
                 "end": pa.uint32(),
-                "gene_id": pa.string(),
-                "annotation": pa.map_(pa.string(), pa.string()),
-                "strand": pa.string(),
-                "sample": pa.string(),
+                "gene_id": pa.large_string(),
+                "annotation": pa.map_(pa.large_string(), pa.large_string()),
+                "strand": pa.large_string(),
+                "sample": pa.large_string(),
                 "pos_counts": pa.map_(pa.uint32(), pa.uint32()),
             },
             metadata={
@@ -233,8 +233,7 @@ class Count:
                     self._bed_reader, fragment=self._get_bed_fragment(chrom)
                 )
                 tmp_file: Path = (
-                    self._tmp
-                    / f"{chrom}_{next(tempfile._get_candidate_names())}.parquet"
+                    self._tmp / f"{next(tempfile._get_candidate_names())}.parquet"
                 )
                 tmp_dict[chrom] = tmp_file
                 pool.apply_async(
