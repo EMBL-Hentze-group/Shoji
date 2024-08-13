@@ -102,7 +102,7 @@ class CreateMatrix:
         Returns:
             None
         """
-        count_ds = ds.dataset(self._count_files, format="parquet").sort_by("chrom")
+        count_ds = ds.dataset(self._count_files, format="parquet")
         # sample names
         self._samples: List[str] = sorted(
             count_ds.to_table()["sample"].unique().to_pylist()
