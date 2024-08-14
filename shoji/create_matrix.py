@@ -1,3 +1,4 @@
+import multiprocessing as mp
 import tempfile
 from itertools import chain
 from pathlib import Path
@@ -57,10 +58,12 @@ class CreateMatrix:
             logger.warning(f"Re-writing file {self.max_out}")
         # set cores
         self.cores: int = set_cores(cores)
-        pa.set_cpu_count(self.cores)
-        # pa_cores: int = max(1, int(self.cores / 2))
-        # pa.set_cpu_count(pa_cores)
-        # self._rest_cores = max(1, self.cores - pa_cores)
+        # pa.set_cpu_count(self.cores)
+        # divide up cores amont arrow and mp
+        pa_cores: int = max(1, int(self.cores / 2))
+        pa.set_cpu_count(pa_cores)
+        self._rest_cores = max(1, self.cores - pa_cores)
+        logger.debug(f"Using {pa_cores} for arrow and {self._rest_cores} for mp")
 
     def __enter__(self) -> "CreateMatrix":
         self._glob_count_files()
@@ -149,38 +152,48 @@ class CreateMatrix:
             max_suffix = None
         else:
             max_suffix = Path(self.out).suffix
-        annotation_tmp, out_tmp, max_tmp = {}, {}, {}
+        annotation_tmp, out_tmp, max_tmp, first_map = {}, {}, {}, {}
         first: bool = True
         for chrom in sorted(fragments.keys()):
-            ann_file: str = str(
+            # iterate over chromosomes and generate output files
+            annotation_tmp[f"{chrom[0]}{chrom[1]}"] = str(
                 self._tmp
                 / f"{next(tempfile._get_candidate_names())}{annotation_suffix}"
             )
-            out_file: str = str(
+            out_tmp[f"{chrom[0]}{chrom[1]}"] = str(
                 self._tmp / f"{next(tempfile._get_candidate_names())}{out_suffix}"
             )
             if self.max_out is None:
-                max_file = None
+                max_tmp[f"{chrom[0]}{chrom[1]}"] = None
             else:
-                max_file = str(
+                max_tmp[f"{chrom[0]}{chrom[1]}"] = str(
                     self._tmp / f"{next(tempfile._get_candidate_names())}{max_suffix}"
                 )
-            annotation_tmp[f"{chrom[0]}{chrom[1]}"] = ann_file
-            out_tmp[f"{chrom[0]}{chrom[1]}"] = out_file
-            max_tmp[f"{chrom[0]}{chrom[1]}"] = max_file
-            create_matrices(
-                fragment=fragments[chrom],
-                chrom=chrom[0],
-                strand=chrom[1],
-                samples=self._samples,
-                ann=ann_file,
-                sums=out_file,
-                maxs=max_file,
-                first=first,
-                is_windowed=self._is_windowed,
-                allow_duplicates=allow_duplicates,
-            )
+            first_map[chrom] = first
             first = False
+        with mp.Pool(self._rest_cores) as pool:
+            for chrom in sorted(fragments.keys()):
+                ann_file: str = annotation_tmp[f"{chrom[0]}{chrom[1]}"]
+                out_file: str = out_tmp[f"{chrom[0]}{chrom[1]}"]
+                max_file: str = max_tmp[f"{chrom[0]}{chrom[1]}"]
+                first: bool = first_map[chrom]
+                pool.apply_async(
+                    create_matrices,
+                    args=(
+                        fragments[chrom],
+                        chrom[0],
+                        chrom[1],
+                        self._samples,
+                        ann_file,
+                        out_file,
+                        max_file,
+                        first,
+                        self._is_windowed,
+                        allow_duplicates,
+                    ),
+                )
+            pool.close()
+            pool.join()
         # accumulate and write annotations
         logger.info(f"writing annotations to {self.annotation}")
         general_accumulator(annotation_tmp, self.annotation)
