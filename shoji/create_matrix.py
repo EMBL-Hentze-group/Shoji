@@ -3,9 +3,11 @@ import tempfile
 from itertools import chain
 from pathlib import Path
 from shutil import rmtree
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Set
 
+import numpy as np
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 
@@ -67,6 +69,7 @@ class CreateMatrix:
 
     def __enter__(self) -> "CreateMatrix":
         self._glob_count_files()
+        self._sanity_check()
         self._prepare_dataset()
         return self
 
@@ -96,6 +99,47 @@ class CreateMatrix:
             )
         logger.info(f"Found {len(self._count_files)} count files in {self.in_dir}")
 
+    def _sanity_check(self) -> None:
+        """_sanity_check Helper function
+        Checks whether all input files have unique sample names
+        checks whether all input files have the same annotation length
+
+        Raises:
+            RuntimeError: If the number of unique sample_names and number of files in self._count_files does not match
+            RuntimeError: If the number of unique annotation lengths are not the same across all samples
+        Returns:
+            None
+        """
+        annotation_size: Set[int] = set()
+        for c in self._count_files:
+            c_table = pq.read_table(c, columns=["annotation", "sample"])
+            sample_size = int(np.sqrt(c_table.num_rows))
+            # take 50 random rows, or the whole table
+            ns = np.random.randint(0, sample_size, min(sample_size, 50))
+            logger.info(f"file: {str(c)}, rows: {c_table.num_rows:,}")
+            # add sample names
+            self._samples.extend(c_table.take(ns)["sample"].unique().to_pylist())
+            # annotation
+            annotation_size.update(
+                {len(a) for a in c_table.take(ns)["annotation"].to_pylist()}
+            )
+        # check if all files have same annotation schema
+        if len(annotation_size) != 1:
+            raise RuntimeError(
+                "Count files have different annotation schema! Check input files"
+            )
+        ann_len: int = list(annotation_size)[0]
+        # windowed tables have 7 annotation elements, 6 for non windowed
+        if ann_len == 7:
+            self._is_windowed = True
+            logger.info("Count files are windowed")
+        self._samples = sorted(self._samples)
+        # number of sample names MUST match number of input files!
+        if len(self._samples) != len(self._count_files):
+            raise RuntimeError(
+                f"Mismatch in number of samples! found {len(self._count_files)} in {self.in_dir} but found {len(self._samples)} sample names in merged count files"
+            )
+
     def _prepare_dataset(self) -> None:
         """_prepare_dataset Helper function
         Generate partitioned parquet dataset from the count files
@@ -105,30 +149,11 @@ class CreateMatrix:
         Returns:
             None
         """
-        count_ds = ds.dataset(self._count_files, format="parquet")
-        # sample names
-        self._samples: List[str] = sorted(
-            count_ds.to_table()["sample"].unique().to_pylist()
-        )
-        if len(self._samples) != len(self._count_files):
-            raise RuntimeError(
-                f"Mismatch in number of samples! found {len(self._count_files)} in {self.in_dir} but found {len(self._samples)} sample names in merged count files"
-            )
-        # windowed
-        # TODO find a better way to do this!
-        annotation = (count_ds.to_table()["annotation"][:100]).to_pylist()
-        alen = list(set([len(a) for a in annotation]))
-        if len(alen) != 1:
-            raise RuntimeError(
-                "Count files have different annotation schema! Check input files"
-            )
-        if alen[0] == 7:
-            self._is_windowed = True
-            logger.info("Count files are windowed")
         partition_schema = ds.partitioning(
             schema=pa.schema([("chrom", pa.string()), ("strand", pa.string())]),
             flavor="hive",
         )
+        count_ds = ds.dataset(self._count_files, format="parquet")
         self._partitioned_ds.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Writing partitioned parquet file {str(self._partitioned_ds)}")
         ds.write_dataset(
