@@ -106,7 +106,7 @@ class CreateMatrix:
 
         Raises:
             RuntimeError: If the number of unique sample_names and number of files in self._count_files does not match
-            RuntimeError: If the number of unique annotation lengths are not the same across all samples
+            RuntimeError: If the number of unique annotation elements are not the same across all samples
         Returns:
             None
         """
@@ -143,9 +143,6 @@ class CreateMatrix:
     def _prepare_dataset(self) -> None:
         """_prepare_dataset Helper function
         Generate partitioned parquet dataset from the count files
-
-        Raises:
-            RuntimeError: If the number of unique sample_names and number of files in self._count_files does not match
         Returns:
             None
         """

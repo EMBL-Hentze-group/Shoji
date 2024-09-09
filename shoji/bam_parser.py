@@ -390,7 +390,7 @@ def _start(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         Tuple[int, int], offset start coordinates
     """
     if aln.is_reverse:
-        start: int = aln.reference_end - 1 - offset
+        start: int = aln.reference_end - offset
         return start - 1, start
     # aln.reference_start: 0-based leftmost coordinate
     begin0 = aln.reference_start + offset
