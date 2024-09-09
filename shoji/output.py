@@ -91,7 +91,7 @@ def tabix_accumulator(
         for chrom in sorted(temp_files.keys()):
             copyfileobj(open(temp_files[chrom], "rb"), tmpsw)
         tmpsw.flush()
-        logger.info(f"Writing bgzip file {file_name} from temp file {tmpsw.name}")
+        logger.info(f"Writing bgzip file {file_name} from temp files in {tmpsw.name}")
         tabix_compress(tmpsw.name, file_name, force=True)
         logger.info(f"Indexing bgzip file {file_name}")
         tabix_index(file_name, force=True, preset=preset)  # type: ignore

@@ -9,6 +9,7 @@ from .count import Count
 from .create_matrix import CreateMatrix
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
+from .tabix_converter import ToTabix
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -35,6 +36,10 @@ click.rich_click.COMMAND_GROUPS = {
         {
             "name": "Counting",
             "commands": ["count", "createMatrix"],
+        },
+        {
+            "name": "Helpers",
+            "commands": ["toTabix"],
         },
     ]
 }
@@ -289,34 +294,6 @@ def create_sliding_windows(
     setup_logger(verbose)
     with SlidingWindows(annotation=annotation, out=out, cores=cores) as sw:
         sw.generate_sliding_windows(step=step, size=size, use_tabix=tabix)
-
-
-# # mapToId subcommand
-# @run.command("mapToId", context_settings=CONTEXT_SETTINGS)
-# @click.option(
-#     "-a",
-#     "--annotation",
-#     "annotation",
-#     type=click.Path(exists=True),
-#     required=True,
-#     help="flattened annotation file from `shoji annotation -h` or sliding window file from `shoji createSlidingWindows -h`",
-# )
-# @click.option(
-#     "-o",
-#     "--out",
-#     "out",
-#     type=click.Path(exists=False),
-#     required=True,
-#     help="Output file, supports .gz compression. Region/window annotation mapped to a unique id",
-# )
-# @verbose_option
-# def map_to_id(annotation: str, out: str, verbose: str) -> None:
-#     """
-#     map entries in *name* column to unique ids and write in tab separated format
-#     """
-#     setup_logger(verbose)
-#     mid = MapToId(annotation=annotation, out=out)
-#     mid.map_to_id()
 
 
 # extract subcommand
@@ -615,7 +592,9 @@ def create_matrix(
     Glob all output files from `shoji count` in the given directory using the given prefix and/or suffix and create
 
     (i) annotation file for all the windows present in any one of the input files.
+
     (ii) aggregated crosslink count matrix for all windows across all samples and
+
     (iii) Optional: crosslink count matrix with max count per window per sample
     """
     if prefix is None and suffix is None:
@@ -632,6 +611,39 @@ def create_matrix(
         tmp_dir=tmp_dir,
     ) as cm:
         cm.create_matrices(allow_duplicates=allow_duplicates)
+
+
+# toTabix subcommand
+@run.command("toTabix", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "-b",
+    "--bed",
+    "bed",
+    type=click.Path(exists=True),
+    required=True,
+    help="Input BED file (bed6 format, supports .gz files)",
+)
+@click.option(
+    "-o",
+    "--output",
+    "out",
+    type=str,
+    required=True,
+    help="Output filename for bgzipped tabix indexed bed file",
+)
+@cores_option
+@tmp_option
+@verbose_option
+def to_tabix(
+    bed: str, out: str, cores: int, tmp_dir: str, verbose: str = "INFO"
+) -> None:
+    """
+    Convert BED file to bgzipped, tabix indexed BED file
+    """
+    setup_logger(verbose)
+
+    with ToTabix(bed6=bed, out=out, cores=cores, tmp_dir=tmp_dir) as tc:
+        tc.convert()
 
 
 if __name__ == "__main__":
