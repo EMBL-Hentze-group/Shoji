@@ -9,12 +9,11 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pysam
+from loguru import logger
 from sortedcontainers import SortedList
 
 from .helpers import set_cores
 from .output import general_accumulator, output_writer, tabix_accumulator
-
-from loguru import logger
 
 
 class BamParser:
@@ -107,6 +106,9 @@ class BamParser:
         min_qual: int,
         min_len: int,
         max_len: int,
+        min_aln_len: int,
+        aln_frac: float,
+        mismatch_frac: float,
         max_interval_len: int,
         primary: bool,
         ignore_PCR: bool,
@@ -121,6 +123,9 @@ class BamParser:
             min_qual: int, Minimum alignment quality
             min_len: int, Minimum read length
             max_len: int, Maximum read length
+            min_aln_len: int, Minimum aligned read length
+            aln_frac: float, Minimum fraction of aligned bases in the read
+            mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
             max_interval_len: int, Maximum interval length, for paired end reads, splice length otherwise
             primary: bool, Flag to extract only primary alignments
             ignore_PCR: bool, Flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
@@ -132,7 +137,7 @@ class BamParser:
         temp_dict: Dict[str, str] = {}
         for chrom in self._chroms:
             temp_dict[chrom] = str(
-                self._tmp / f"{next(tempfile._get_candidate_names())}{suffix}"
+                self._tmp / f"{next(tempfile._get_candidate_names())}{suffix}"  # type: ignore
             )
         with mp.Pool(self.cores) as pool:
             for chrom, temp_file in temp_dict.items():
@@ -147,6 +152,9 @@ class BamParser:
                         min_qual,
                         min_len,
                         max_len,
+                        min_aln_len,
+                        aln_frac,
+                        mismatch_frac,
                         max_interval_len,
                         primary,
                         ignore_PCR,
@@ -195,6 +203,9 @@ def extract_single_site(
     min_qual: int,
     min_len: int,
     max_len: int,
+    min_aln_len: int,
+    aln_frac: float,
+    mismatch_frac: float,
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
@@ -214,6 +225,9 @@ def extract_single_site(
         min_qual: int, minimum alignment quality
         min_len: int, minimum read length
         max_len: int, maximum read length
+        min_aln_len: int, minimum aligned read length
+        aln_frac: float, minimum fraction of aligned bases in the read
+        mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
         max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
         primary: bool, flag to extract only primary alignments
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
@@ -232,6 +246,9 @@ def extract_single_site(
                 min_qual,
                 min_len,
                 max_len,
+                min_aln_len,
+                aln_frac,
+                mismatch_frac,
                 max_interval_len,
                 primary,
                 ignore_PCR,
@@ -270,6 +287,9 @@ def extract_multiple_sites(
     min_qual: int,
     min_len: int,
     max_len: int,
+    min_aln_len: int,
+    aln_frac: float,
+    mismatch_frac: float,
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
@@ -287,6 +307,9 @@ def extract_multiple_sites(
         min_qual: int, minimum alignment quality
         min_len: int, minimum read length
         max_len: int, maximum read length
+        min_aln_len: int, minimum aligned read length
+        aln_frac: float, minimum fraction of aligned bases in the read
+        mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
         max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
         primary: bool, flag to extract only primary alignments
         ignore_PCR: bool, flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
@@ -305,6 +328,9 @@ def extract_multiple_sites(
                 min_qual,
                 min_len,
                 max_len,
+                min_aln_len,
+                aln_frac,
+                mismatch_frac,
                 max_interval_len,
                 primary,
                 ignore_PCR,
@@ -324,7 +350,13 @@ def extract_multiple_sites(
                     )
                     continue
                 positions.add(
-                    (start, end, f"{aln.query_name}|{aln.query_length}", yb, strand)
+                    (
+                        start,
+                        end,
+                        f"{aln.query_name}|{aln.query_length}",
+                        yb,
+                        strand,
+                    )
                 )
             used += 1
     total = used + discarded
@@ -340,6 +372,9 @@ def _discard_read(
     qual: int,
     min_len: int,
     max_len: int,
+    min_aln_len: int,
+    aln_frac: float,
+    mismatch_frac: float,
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
@@ -353,6 +388,10 @@ def _discard_read(
         qual: int, Minimum alignment quality
         min_len: int, Minimum read length
         max_len: int, Maximum read length
+        min_aln_len: int, Minimum aligned read length
+        aln_frac: float, Minimum fraction of aligned bases in the read
+        aln_frac: float, Minimum fraction of aligned bases in the read
+        mismatch_frac: float, maximum fraction of mismatches to alignment length (needs tag "NM" in the bam file)
         max_interval_len: int, Maximum interval length, for paired end reads, splice length otherwise
         primary: bool, Flag to extract only primary alignments
         ignore_PCR: bool, Flag to ignore PCR duplicates (only if bam file has PCR duplicate flag in alignment)
@@ -366,7 +405,9 @@ def _discard_read(
         or aln.mapping_quality < qual
         or aln.query_length < min_len
         or aln.query_length > max_len
-        or aln.reference_length
+        or aln.query_alignment_length < min_aln_len
+        or (aln.query_alignment_length / aln.query_length) < aln_frac
+        or aln.reference_length  # type: ignore
         > max_interval_len  # @TODO: fix this to consider only spliced segments
     ):
         return True
@@ -376,6 +417,12 @@ def _discard_read(
         return True
     elif mate == 2 and aln.is_read1:
         return True
+    if aln.has_tag("NM"):
+        # only check for mismatches if the tag "NM" is present
+        if (aln.get_tag("NM") / aln.query_alignment_length) > mismatch_frac:  # type: ignore
+            return True
+        else:
+            return False
     return False
 
 
@@ -390,7 +437,7 @@ def _start(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         Tuple[int, int], offset start coordinates
     """
     if aln.is_reverse:
-        start: int = aln.reference_end - offset
+        start: int = aln.reference_end - offset  # type: ignore
         return start - 1, start
     # aln.reference_start: 0-based leftmost coordinate
     begin0 = aln.reference_start + offset
@@ -411,7 +458,7 @@ def _end(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         # aln.reference_start: 0-based leftmost coordinate
         begin0 = aln.reference_start + offset
         return begin0, begin0 + 1
-    start: int = aln.reference_end - 1 - offset
+    start: int = aln.reference_end - offset  # type: ignore
     return start - 1, start
 
 
@@ -427,12 +474,12 @@ def _middle(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
         Tuple[int,int], middle site position
     """
     match_ops: Set[int] = {0, 4, 5}
-    cigars: Set[int] = set([x[0] for x in aln.cigartuples])
+    cigars: Set[int] = set([x[0] for x in aln.cigartuples])  # type: ignore
     mid: int = int(Decimal(aln.query_alignment_length / 2).quantize(0, ROUND_HALF_UP))
 
     if (len(cigars - match_ops) == 0) and (aln.is_reverse):
         # only match, soft clip, hard clip, negative strand
-        middle: int = aln.reference_end - mid
+        middle: int = aln.reference_end - mid  # type: ignore
         return middle - 1, middle
     elif (len(cigars - match_ops) == 0) and (not aln.is_reverse):
         # only match, soft clip, hard clip, positive strand
@@ -482,7 +529,7 @@ def _get_forward_mid_pos(pairs: np.ndarray, mid: int) -> Tuple[int, int]:
     """
     while mid > 0:
         if pairs[mid, 1] - pairs[mid - 1, 1] == 1:
-            return mid - 1, mid
+            return pairs[mid - 1, 1], pairs[mid, 1]
         else:
             mid -= 1
     return -1, -1
@@ -501,7 +548,7 @@ def _get_reverse_mid_pos(pairs: np.ndarray, mid: int) -> Tuple[int, int]:
     """
     while mid < pairs.shape[0]:
         if pairs[mid, 1] - pairs[mid - 1, 1] == 1:
-            return mid - 1, mid
+            return pairs[mid - 1, 1], pairs[mid, 1]
         else:
             mid += 1
     return -1, -1
@@ -516,12 +563,16 @@ def _insertion(aln: pysam.AlignedSegment) -> List[Tuple[int, int]]:
     Returns:
         List[Tuple[int, int]], List of insertion points (start, end)
     """
-    cigars: Set[int] = set([x[0] for x in aln.cigartuples])
+    cigars: Set[int] = set([x[0] for x in aln.cigartuples])  # type: ignore
     if 1 not in cigars:
         # https://pysam.readthedocs.io/en/latest/api.html#pysam.AlignedSegment.get_cigar_stats
         # No insertion found
         return []
-    return _insertion_deletion_points(aln.cigartuples, aln.get_aligned_pairs(), 1)
+    return _insertion_deletion_points(
+        aln.cigartuples,
+        aln.get_aligned_pairs(),
+        1,  # type: ignore
+    )
 
 
 def _deletion(aln: pysam.AlignedSegment) -> List[Tuple[int, int]]:
@@ -538,7 +589,11 @@ def _deletion(aln: pysam.AlignedSegment) -> List[Tuple[int, int]]:
         # https://pysam.readthedocs.io/en/latest/api.html#pysam.AlignedSegment.get_cigar_stats
         # No deletion found
         return []
-    return _insertion_deletion_points(aln.cigartuples, aln.get_aligned_pairs(), 2)  # type: ignore
+    return _insertion_deletion_points(
+        aln.cigartuples,
+        aln.get_aligned_pairs(),
+        2,  # type: ignore
+    )
 
 
 def _insertion_deletion_points(
@@ -563,7 +618,9 @@ def _insertion_deletion_points(
             continue
         start_index = np.min(ops_index) - 1
         end_index = np.max(ops_index) + 1
-        ops_locations.append((cigar_ref[start_index, 1], cigar_ref[end_index, 1]))  # type: ignore
+        ops_locations.append(
+            (cigar_ref[start_index, 1], cigar_ref[end_index, 1])
+        )  # type: ignore
     return ops_locations
 
 

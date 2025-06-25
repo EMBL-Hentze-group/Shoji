@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from os import cpu_count
 from pathlib import Path
-from typing import NamedTuple, List
-import numpy as np
+from typing import List, NamedTuple
 
+import numpy as np
 from loguru import logger
 
 """_summary_
@@ -48,6 +48,24 @@ def check_tabix(annotation) -> bool:
     return False
 
 
+def check_bam_index(bam: str) -> None:
+    """_check_bam_index check for BAM indices
+    Helper function to check for BAM indices (.bai)
+    Args:
+        bam (str): Path to the BAM file.
+    Raises:
+        FileNotFoundError: If the BAM index file does not exist.
+    """
+    bp: Path = Path(bam)
+    if (not bp.with_name(f"{bp.name}.bai").exists()) and (
+        not bp.with_name(f"{bp.name}.csi").exists()
+    ):
+        # @TODO: improve this!
+        raise FileNotFoundError(
+            f"BAM index file not found for {bam}. Please run `samtools index {bam}` first!"
+        )
+
+
 class BedFeature(NamedTuple):
     """_summary_
     A named tuple representing a BED feature.
@@ -81,5 +99,7 @@ class Crosslinks:
        pos (List[int]): A sorted list of unique integers representing the distinct crosslink positions.
     """
 
-    counts: np.ndarray  # first column crosslink pos, second column crosslink counts
+    counts: (
+        np.ndarray
+    )  # first column crosslink pos, second column crosslink counts
     pos: List[int]  # sorted list of crosslink positions

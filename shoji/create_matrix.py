@@ -1,21 +1,20 @@
 import multiprocessing as mp
 import tempfile
+from gzip import open as gzopen
 from itertools import chain
 from pathlib import Path
 from shutil import rmtree
-from typing import Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
-
-# import pyarrow.parquet as pq
+import pyarrow.parquet as pq
 from loguru import logger
+from pyarrow.csv import CSVWriter, WriteOptions
 
 from .helpers import set_cores
-from .output import general_accumulator, output_writer
+from .schemas import count_schema, get_annotation_schema
 
 
 class CreateMatrix:
@@ -28,20 +27,38 @@ class CreateMatrix:
         cores: int = 1,
         prefix: Optional[str] = None,
         suffix: Optional[str] = ".parquet",
+        format: str = "csv",
         tmp_dir: Optional[str] = None,
     ) -> None:
+        """CreateMatrix Class
+        Args:
+            in_dir (str): Input directory with count files
+            annotation (str): Output file for the annotation matrix
+            out (str): Output file for the sum matrix
+            max_out (Optional[str], optional): Output file for the max count matrix. Defaults to None.
+            cores (int, optional): Number of cores to use. Defaults to 1.
+            prefix (Optional[str], optional): Prefix for the input files. Defaults to None.
+            suffix (Optional[str], optional): Suffix for the input files. Defaults to ".parquet".
+            format (str, optional): Format of the output files. Defaults to "csv", could be either "csv" or "parquet".
+            tmp_dir (Optional[str], optional): Temporary directory for intermediate files. Defaults to None.
+        """
         self.in_dir = in_dir
         self.annotation = annotation
         self.out = out
         self.max_out = max_out
         self.prefix = prefix
         self.suffix = suffix
+        self.format = format
         if tmp_dir is None:
-            self._tmp = Path(self.out).parent / next(tempfile._get_candidate_names())
+            self._tmp = Path(self.out).parent / next(
+                tempfile._get_candidate_names()  # type: ignore
+            )
         else:
             if not Path(tmp_dir).exists():
                 raise FileNotFoundError(f"Directory {tmp_dir} does not exists!")
-            self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
+            self._tmp: Path = Path(tmp_dir) / next(
+                tempfile._get_candidate_names()  # type: ignore
+            )
         # count files
         self._count_files: List[Path] = []
         # sample names
@@ -49,7 +66,7 @@ class CreateMatrix:
         # windowed
         self._is_windowed: bool = False
         # temp. partitioned parquet dataset
-        self._partitioned_ds = self._tmp / next(tempfile._get_candidate_names())
+        self._partitioned_ds = self._tmp / next(tempfile._get_candidate_names())  # type: ignore
         if Path(self.annotation).exists():
             logger.warning(f"Re-writing file {self.annotation}")
         if Path(self.out).exists():
@@ -62,7 +79,8 @@ class CreateMatrix:
         self.cores: int = set_cores(cores)
         # pa.set_cpu_count(self.cores)
         # divide up cores amont arrow and mp
-        pa_cores: int = max(1, int(self.cores / 2))
+        # @TODO: is there a better way to do this?
+        pa_cores: int = max(1, self.cores // 2)
         pa.set_cpu_count(pa_cores)
         self._rest_cores = max(1, self.cores - pa_cores)
         logger.debug(f"Using {pa_cores} for arrow and {self._rest_cores} for mp")
@@ -87,11 +105,11 @@ class CreateMatrix:
         """
         wildcard: str = ""
         if self.prefix is None:
-            wildcard = "*" + self.suffix
+            wildcard = f"*{self.suffix}"
         elif self.suffix is None:
-            wildcard = self.prefix + "*"
+            wildcard = f"{self.prefix}*"
         else:
-            wildcard = self.prefix + "*" + self.suffix
+            wildcard = f"{self.prefix}*{self.suffix}"
         self._count_files = sorted(Path(self.in_dir).glob(wildcard))
         if len(self._count_files) == 0:
             raise FileNotFoundError(
@@ -110,27 +128,25 @@ class CreateMatrix:
         Returns:
             None
         """
-        annotation_size: Set[int] = set()
+        window_col: Set[bool] = set()
         for c in self._count_files:
-            c_table = pq.read_table(c, columns=["annotation", "sample"])
-            sample_size = int(np.sqrt(c_table.num_rows))
-            # take 50 random rows, or the whole table
-            ns = np.random.randint(0, sample_size, min(sample_size, 50))
-            logger.info(f"file: {str(c)}, rows: {c_table.num_rows:,}")
+            c_table = pq.read_table(
+                c, schema=count_schema, columns=["window_number", "sample"]
+            )
             # add sample names
-            self._samples.extend(c_table.take(ns)["sample"].unique().to_pylist())
-            # annotation
-            annotation_size.update(
-                {len(a) for a in c_table.take(ns)["annotation"].to_pylist()}
+            self._samples.extend(c_table.column("sample").unique().to_pylist())
+            # check if the window number column is null
+            window_col.add(
+                c_table.column("window_number").unique().is_null()[0].as_py()
             )
         # check if all files have same annotation schema
-        if len(annotation_size) != 1:
+        if len(window_col) != 1:
             raise RuntimeError(
-                "Count files have different annotation schema! Check input files"
+                "Count files appear to be a mix of windowed and non windowed data! Check input files"
             )
-        ann_len: int = list(annotation_size)[0]
-        # windowed tables have 7 annotation elements, 6 for non windowed
-        if ann_len == 7:
+        if not window_col.pop():
+            # if first element, and the only element is False, then all are windowed
+            # since checking is_null()
             self._is_windowed = True
             logger.info("Count files are windowed")
         self._samples = sorted(self._samples)
@@ -150,7 +166,7 @@ class CreateMatrix:
             schema=pa.schema([("chrom", pa.string()), ("strand", pa.string())]),
             flavor="hive",
         )
-        count_ds = ds.dataset(self._count_files, format="parquet")
+        count_ds = ds.dataset(self._count_files, format="parquet", schema=count_schema)
         self._partitioned_ds.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Writing partitioned parquet file {str(self._partitioned_ds)}")
         ds.write_dataset(
@@ -168,37 +184,18 @@ class CreateMatrix:
         for fragment in partitioned_ds.get_fragments():
             partition_dict = ds.get_partition_keys(fragment.partition_expression)
             fragments[(partition_dict["chrom"], partition_dict["strand"])] = fragment
-        annotation_suffix: str = Path(self.annotation).suffix
-        out_suffix: str = Path(self.out).suffix
-        if self.max_out is None:
-            max_suffix = None
-        else:
-            max_suffix = Path(self.out).suffix
-        annotation_tmp, out_tmp, max_tmp, first_map = {}, {}, {}, {}
-        first: bool = True
-        for chrom in sorted(fragments.keys()):
-            # iterate over chromosomes and generate output files
-            annotation_tmp[f"{chrom[0]}{chrom[1]}"] = str(
-                self._tmp
-                / f"{next(tempfile._get_candidate_names())}{annotation_suffix}"
-            )
-            out_tmp[f"{chrom[0]}{chrom[1]}"] = str(
-                self._tmp / f"{next(tempfile._get_candidate_names())}{out_suffix}"
-            )
-            if self.max_out is None:
-                max_tmp[f"{chrom[0]}{chrom[1]}"] = None
-            else:
-                max_tmp[f"{chrom[0]}{chrom[1]}"] = str(
-                    self._tmp / f"{next(tempfile._get_candidate_names())}{max_suffix}"
-                )
-            first_map[chrom] = first
-            first = False
+        ann_files, out_files, max_files = [], [], []
         with mp.Pool(self._rest_cores) as pool:
             for chrom in sorted(fragments.keys()):
-                ann_file: str = annotation_tmp[f"{chrom[0]}{chrom[1]}"]
-                out_file: str = out_tmp[f"{chrom[0]}{chrom[1]}"]
-                max_file: str = max_tmp[f"{chrom[0]}{chrom[1]}"]
-                first: bool = first_map[chrom]
+                tmp_name: str = next(tempfile._get_candidate_names())  # type: ignore
+                ann_file: str = str(self._tmp / f"ann_{chrom[0]}_{tmp_name}.parquet")
+                ann_files.append(ann_file)
+                out_file: str = str(self._tmp / f"count_{chrom[0]}_{tmp_name}.parquet")
+                out_files.append(out_file)
+                max_file: Optional[str] = None
+                if self.max_out is not None:
+                    max_file = str(self._tmp / f"maxs_{chrom[0]}_{tmp_name}.parquet")
+                    max_files.append(max_file)
                 pool.apply_async(
                     create_matrices,
                     args=(
@@ -209,23 +206,69 @@ class CreateMatrix:
                         ann_file,
                         out_file,
                         max_file,
-                        first,
                         self._is_windowed,
                         allow_duplicates,
                     ),
                 )
             pool.close()
             pool.join()
-        # accumulate and write annotations
-        logger.info(f"writing annotations to {self.annotation}")
-        general_accumulator(annotation_tmp, self.annotation)
-        # accumulate and write window counts
-        logger.info(f"writing counts to {self.out}")
-        general_accumulator(out_tmp, self.out)
-        # accumulate and write max counts
-        if self.max_out is not None:
-            logger.info(f"writing max counts to {self.max_out}")
-            general_accumulator(max_tmp, self.max_out)
+        # write out files
+        if self.format == "parquet":
+            self._parquet_writer(ann_files, self.annotation)
+            self._parquet_writer(out_files, self.out)
+            if self.max_out is not None:
+                self._parquet_writer(max_files, self.max_out)
+        elif self.format == "csv":
+            self._csv_writer(ann_files, self.annotation)
+            self._csv_writer(out_files, self.out)
+            if self.max_out is not None:
+                self._csv_writer(max_files, self.max_out)
+
+    def _parquet_writer(self, files: List[str], out: str) -> None:
+        """_parquet_writer Helper function
+        Write a list of parquet files to a single parquet file
+        Args:
+            files (List[str]): List of parquet files
+            out (str): Output file path
+
+        Returns:
+            None
+        """
+        if Path(out).suffix != ".parquet":
+            logger.warning(
+                f"Output file {out} does not have .parquet suffix altough output format is set to parquet. Fix this inconsistency!"
+            )
+        fschema: pa.Schema = pq.read_schema(files[0])
+        with pq.ParquetWriter(out, schema=fschema) as writer:
+            for f in files:
+                writer.write_table(pq.read_table(f, schema=fschema))
+
+    def _csv_writer(self, files: List[str], out: str) -> None:
+        """_csv_writer Helper function
+        Write a list of csv files to a single csv file
+        Args:
+            files (List[str]): List of csv files
+            out (str): Output file path
+
+        Returns:
+            None
+        """
+        gz_suffixes: Set[str] = {".gz", ".gzip", ".bgz"}
+        if Path(out).suffix.lower() in gz_suffixes:
+            handler: Callable = gzopen
+        else:
+            handler = open
+        schema: pa.Schema = pq.read_schema(files[0])
+        write_opts = WriteOptions(
+            include_header=False, delimiter="\t", quoting_style="none"
+        )
+        # The following is a hack until this issue in pyarrow is resolved:
+        # https://github.com/apache/arrow/issues/41239
+        with handler(out, "wb") as wh:
+            wh.write(("\t".join(schema.names) + "\n").encode("utf-8"))
+            with CSVWriter(wh, schema=schema, write_options=write_opts) as csvh:
+                for f in files:
+                    csvh.write_table(pq.read_table(f, schema=schema))
 
 
 class WindowCount:
@@ -270,6 +313,52 @@ class WindowCount:
         return wmax
 
 
+def _build_row_map(
+    gene_df: pa.Table, ann_cols: Set[str]
+) -> Dict[Tuple[int, int], WindowCount]:
+    """_build_row_map Helper function
+    Build a dictionary of rows for a given gene
+    Args:
+        gene_df (pa.Table): gene table with crosslink count per window
+
+    Returns:
+        Dict[Tuple[int, int], WindowCount]: Dictionary of rows
+    """
+    row_map: Dict[Tuple[int, int], WindowCount] = {}
+    for row in gene_df.to_pylist():
+        uid = (row["begin"], row["end"])
+        try:
+            row_map[uid].add(row["sample"], row["pos_counts"])
+        except KeyError:
+            row_map[uid] = WindowCount()
+            row_map[uid].add(row["sample"], row["pos_counts"])
+            annotations: Dict[str, str] = {}
+            for an in ann_cols:
+                annotations[an] = row[an]
+            row_map[uid].annotations = annotations
+    return row_map
+
+
+def _generate_count_schema(
+    samples: List[str], unique_id: str = "unique_id"
+) -> pa.Schema:
+    """_generate_count_schema Helper function
+    Generate a schema for the count file
+    Args:
+        samples (List[str]): List of sample names
+        unique_id (str): Unique id column name for the count file
+
+    Returns:
+        pa.Schema: Schema for the count file
+    """
+    return pa.schema(
+        [
+            pa.field(unique_id, pa.string(), nullable=False),
+            *[pa.field(s, pa.uint32(), nullable=False) for s in samples],
+        ]
+    )
+
+
 def create_matrices(
     fragment: ds.ParquetFileFragment,
     chrom: str,
@@ -278,91 +367,120 @@ def create_matrices(
     ann: str,
     sums: str,
     maxs: Optional[str] = None,
-    first: bool = False,
     is_windowed: bool = False,
     allow_duplicates: bool = False,
 ):
-    ann_header: List[str] = [
-        "unique_id",
-        "chromosome",
-        "begin",
-        "end",
-        "strand",
-        "gene_id",
-        "gene_name",
-        "gene_type",
-        "gene_region",
-        "Nr_of_region",
-        "Total_nr_of_region",
-    ]
-    if is_windowed:
-        ann_header.append("window_number")
-    # annotation handler
-    ann_writer: Callable = output_writer(out=ann, use_tabix=False)
-    # sum handler
-    sum_writer: Callable = output_writer(out=sums, use_tabix=False)
-    # counts table
-    counts: pa.Table = fragment.to_table().sort_by("begin")
-    # genes
-    genes: pa.StringArray = counts["gene_id"].unique()
-    logger.debug(f"{fragment}")
-    logger.info(f"Found {len(genes):,} genes in {chrom} {strand}")
-    # max counts
-    max_counts: List[List[str]] = []
+    """
+    Processes a Parquet fragment to generate annotation, sum, and max count matrices for genomic intervals.
+
+    Args:
+        fragment (pyarrow.dataset.ParquetFileFragment): The Parquet fragment containing count data.
+        chrom (str): Chromosome name.
+        strand (str): Strand information ('+' or '-').
+        samples (List[str]): List of sample names.
+        ann (str): Output file path for the annotation matrix.
+        sums (str): Output file path for the sum matrix.
+        maxs (Optional[str], optional): Output file path for the max matrix. Defaults to None.
+        is_windowed (bool, optional): Whether the data is windowed. Defaults to False.
+        allow_duplicates (bool, optional): Whether to allow duplicate intervals. Defaults to False.
+
+    Returns:
+        None
+    """
+    annotation_cols: Set[str] = set(
+        [
+            "uniq_id",
+            "gene_id",
+            "gene_name",
+            "gene_type",
+            "feature",
+            "nr_of_region",
+            "total_region",
+            "window_number",
+        ]
+    )
+    diff_cols: Set[str] = annotation_cols - set(count_schema.names)
+    if len(diff_cols) > 0:
+        missing = ", ".join(diff_cols)
+        raise RuntimeError(
+            f"Missing columns in count files: {missing}!. Please check the count file schema."
+        )
+    # how to handle duplicates
     if allow_duplicates:
         row_fn: Callable = all_rows
     else:
         row_fn: Callable = pick_rows
-    with ann_writer(ann) as aw, sum_writer(sums) as sw:
-        if first:
-            aw.write("\t".join(ann_header) + "\n")
-            sw.write("\t".join(["unique_id"] + samples) + "\n")
-        for gene in genes:
-            row_map: Dict[Tuple[int, int], WindowCount] = {}
-            for row in counts.filter(pc.field("gene_id") == gene).to_pylist():
-                uid = (row["begin"], row["end"])
-                try:
-                    row_map[uid].add(row["sample"], row["pos_counts"])
-                except KeyError:
-                    row_map[uid] = WindowCount()
-                    row_map[uid].add(row["sample"], row["pos_counts"])
-                    row_map[uid].annotations = dict(row["annotation"])
-            uniq_rows: List[Tuple[int, int]] = row_fn(row_map=row_map, strand=strand)
-            for ur in uniq_rows:
-                annotation: List[str] = [
-                    row_map[ur].annotations["uniq_id"],
-                    chrom,
-                    str(ur[0]),
-                    str(ur[1]),
-                    strand,
-                    str(gene),
-                    row_map[ur].annotations["gene_name"],
-                    row_map[ur].annotations["gene_type"],
-                    row_map[ur].annotations["feature"],
-                    row_map[ur].annotations["nr_of_region"],
-                    row_map[ur].annotations["total_region"],
-                ]
-                if is_windowed:
-                    annotation.append(row_map[ur].annotations["window_number"])
-                aw.write("\t".join(annotation) + "\n")
-                window_sums: List[str] = [row_map[ur].annotations["uniq_id"]]
-                window_maxs: List[str] = [row_map[ur].annotations["uniq_id"]]
-                for sample in samples:
-                    if sample not in row_map[ur].window_sum:
-                        window_sums.append("0")
-                        window_maxs.append("0")
-                        continue
-                    window_sums.append(str(row_map[ur].window_sum[sample]))
-                    window_maxs.append(str(row_map[ur].window_max[sample]))
-                sw.write("\t".join(window_sums) + "\n")
-                max_counts.append(window_maxs)
+    # annotation schema and dictionary
+    ann_schema: pa.Schema = get_annotation_schema(windowed=is_windowed)
+    ann_dict: Dict[str, List[Any]] = dict([(name, list()) for name in ann_schema.names])
+    # count and max count output schema
+    out_schema: pa.Schema = _generate_count_schema(
+        samples=samples, unique_id="unique_id"
+    )
+    count_dict: Dict[str, List[str | int]] = dict(
+        [(name, list()) for name in out_schema.names]
+    )
+    # max count dictionary
+    max_dict: Dict[str, List[str | int]] = dict(
+        [(name, list()) for name in out_schema.names]
+    )
+    # counts table
+    counts: pa.Table = fragment.to_table().sort_by("begin")
+    # genes
+    genes: List[str] = counts["gene_id"].unique().to_pylist()
+    for gene in genes:
+        gene_df: pa.Table = counts.filter(pc.field("gene_id") == gene)
+        gene_name: str = gene_df.column("gene_name").unique()[0].as_py()
+        gene_type: str = gene_df.column("gene_type").unique()[0].as_py()
+        row_map: Dict[Tuple[int, int], WindowCount] = _build_row_map(
+            gene_df=gene_df,
+            ann_cols={
+                "uniq_id",
+                "feature",
+                "nr_of_region",
+                "total_region",
+                "window_number",
+            },
+        )
+        uniq_rows: List[Tuple[int, int]] = row_fn(row_map=row_map, strand=strand)
+        for ur in uniq_rows:
+            # fill annotation dictionary
+            ann_dict["unique_id"].append(row_map[ur].annotations["uniq_id"])
+            ann_dict["chromosome"].append(chrom)
+            ann_dict["begin"].append(ur[0])
+            ann_dict["end"].append(ur[1])
+            ann_dict["strand"].append(strand)
+            ann_dict["gene_id"].append(gene)
+            ann_dict["gene_name"].append(gene_name)
+            ann_dict["gene_type"].append(gene_type)
+            ann_dict["gene_region"].append(row_map[ur].annotations["feature"])
+            ann_dict["Nr_of_region"].append(row_map[ur].annotations["nr_of_region"])
+            ann_dict["Total_nr_of_region"].append(
+                row_map[ur].annotations["total_region"]
+            )
+            if is_windowed:
+                ann_dict["window_number"].append(
+                    row_map[ur].annotations["window_number"]
+                )
+            # fill count dictionary and max count dictionary
+            cx_sum = row_map[ur].window_sum
+            cx_max = row_map[ur].window_max
+            count_dict["unique_id"].append(row_map[ur].annotations["uniq_id"])
+            max_dict["unique_id"].append(row_map[ur].annotations["uniq_id"])
+            for sample in samples:
+                if sample in cx_sum:
+                    count_dict[sample].append(cx_sum[sample])
+                    max_dict[sample].append(cx_max[sample])
+                else:
+                    count_dict[sample].append(0)
+                    max_dict[sample].append(0)
+    # write annotation table
+    pq.write_table(pa.table(ann_dict, schema=ann_schema), ann)
+    # write count table
+    pq.write_table(pa.table(count_dict, schema=out_schema), sums)
+    # write max count table if provided
     if maxs is not None:
-        max_writer: Callable = output_writer(out=maxs, use_tabix=False)
-        with max_writer(maxs) as mw:
-            if first:
-                mw.write("\t".join(["unique_id"] + samples) + "\n")
-            for m in max_counts:
-                mw.write("\t".join(m) + "\n")
+        pq.write_table(pa.table(max_dict, schema=out_schema), maxs)
 
 
 def all_rows(

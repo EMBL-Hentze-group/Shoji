@@ -4,19 +4,19 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
-from shutil import copyfile, rmtree
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Union
+from shutil import rmtree
+from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pysam
 from loguru import logger
-from pyarrow import dataset as pds
 from pyarrow.dataset import ParquetFileFragment
 
-from .helpers import BedFeature, check_tabix, set_cores, Crosslinks
+from .helpers import BedFeature, Crosslinks, check_tabix, set_cores
 from .pyarrow_reader import PartionedParquetReader
+from .schemas import count_schema
 
 
 class Count:
@@ -49,11 +49,15 @@ class Count:
         self.cores: int = set_cores(cores)
         pa.set_cpu_count(self.cores)
         if tmp_dir is None:
-            self._tmp = Path(self.out).parent / next(tempfile._get_candidate_names())
+            self._tmp = Path(self.out).parent / next(
+                tempfile._get_candidate_names()  # type: ignore
+            )
         else:
             if not Path(tmp_dir).exists():
                 raise FileNotFoundError(f"Directory {tmp_dir} does not exists!")
-            self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
+            self._tmp: Path = Path(tmp_dir) / next(
+                tempfile._get_candidate_names()  # type: ignore
+            )
         self._tmp.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using {str(self._tmp)} as temp. directory")
         if sample_name is None:
@@ -84,9 +88,9 @@ class Count:
 
     def __enter__(self) -> "Count":
         self._check_out_suffix()
-        self._get_annotation_handler()
+        self._set_annotation_handler()
         self._annh.__enter__()
-        self._get_count_handler()
+        self._set_count_handler()
         self._bedh.__enter__()
         return self
 
@@ -107,8 +111,8 @@ class Count:
         if self.out.exists():
             logger.warning(f"Rewriting file {str(self.out)}")
 
-    def _get_annotation_handler(self) -> None:
-        """_get_annotation_handler Helper function
+    def _set_annotation_handler(self) -> None:
+        """_set_annotation_handler Helper function
         Appropriate file handle and associated read function
         depending on file type for annotation data
         """
@@ -128,8 +132,8 @@ class Count:
             self._ann_fragments = self._annh.get_partitioned_fragments()
             self._ann_reader = fragment_reader
 
-    def _get_count_handler(self) -> None:
-        """_get_count_handler Helper function
+    def _set_count_handler(self) -> None:
+        """_set_count_handler Helper function
         Appropriate file handle and associated read function
         depending on file type for count data
         """
@@ -181,7 +185,7 @@ class Count:
 
     def count(self) -> None:
         """count
-         Count crosslink positions across common chromosomes found between annotation and count files.
+        Count crosslink positions across common chromosomes found between annotation and count files.
 
         Returns:
             None
@@ -200,29 +204,6 @@ class Count:
             f"{self.annotation} and {self.bed} have {len(common_chroms)} common chromosomes"
         )
         logger.debug(f"Common chromosomes: {', '.join(common_chroms)}")
-        # schema for output file
-        schema: pa.Schema = pa.schema(
-            {
-                "chrom": pa.large_string(),
-                "begin": pa.uint32(),
-                "end": pa.uint32(),
-                "gene_id": pa.large_string(),
-                "annotation": pa.map_(pa.large_string(), pa.large_string()),
-                "strand": pa.large_string(),
-                "sample": pa.large_string(),
-                "pos_counts": pa.map_(pa.uint32(), pa.uint32()),
-            },
-            metadata={
-                "chrom": "chromosome name",
-                "begin": "window start position",
-                "end": "window end position",
-                "gene_id": "gene id",
-                "annotation": "key: feature names, values: feature attributes",
-                "strand": "strand info",
-                "sample": "sample name",
-                "pos_counts": "keys: positions, values: crosslink counts",
-            },
-        )
         tmp_dict: Dict[str, Path] = {}  # tmp file dictionary
         with mp.Pool(processes=self.cores) as pool:
             for chrom in common_chroms:
@@ -233,12 +214,20 @@ class Count:
                     self._bed_reader, fragment=self._get_bed_fragment(chrom)
                 )
                 tmp_file: Path = (
-                    self._tmp / f"{next(tempfile._get_candidate_names())}.parquet"
+                    self._tmp
+                    / f"{next(tempfile._get_candidate_names())}.parquet"  # type: ignore
                 )
                 tmp_dict[chrom] = tmp_file
                 pool.apply_async(
                     count_crosslinks,
-                    args=(ann_fn, bed_fn, chrom, schema, tmp_file, self.sample_name),
+                    args=(
+                        ann_fn,
+                        bed_fn,
+                        chrom,
+                        count_schema,
+                        tmp_file,
+                        self.sample_name,
+                    ),
                 )
             pool.close()
             pool.join()
@@ -274,19 +263,10 @@ class Count:
             raise RuntimeError(
                 f"Cannot create crosslink window count for windows in {self.annotation} based on counts in {self.bed}. Check the input files!"
             )
-        merged = pds.dataset(data_files, format="parquet")
-        tmp_out_name = (
-            self._tmp / f"{next(tempfile._get_candidate_names())}"
-        )  # temp. dir for storing parquet file
-        pds.write_dataset(
-            merged, tmp_out_name, format="parquet", min_rows_per_group=30000
-        )
-        pq_path: List[Path] = sorted(tmp_out_name.glob("*.parquet"))
-        if len(pq_path) > 1:
-            raise RuntimeError(
-                "Expected only one intermediate output file, but found multiple intermediate outputs! Cannot handle multiple intermediate output files"
-            )
-        _ = copyfile(pq_path[0], self.out)
+        with pq.ParquetWriter(self.out, count_schema) as writer:
+            for countf in data_files:
+                logger.debug(f"Writing {str(countf)} to {str(self.out)}")
+                writer.write_table(pq.read_table(countf, schema=count_schema))
 
 
 def tabix_reader(fragment: str, chrom: str) -> Generator[pysam.BedProxy, None, None]:
@@ -385,9 +365,9 @@ def count_crosslinks(
     sample_name: str,
 ):
     """count_crosslinks count crosslinks for a chromosome
-     Count crosslinks within specified regions and annotate them with corresponding gene information.
+    Count crosslinks within specified regions and annotate them with corresponding gene information.
 
-     Args:
+    Args:
         annotation_fn (Callable): A callable that returns an iterator over annotated genomic regions.
         bed_fn (Callable): A callable that returns an iterator over BED-formatted crosslink positions.
         chrom (str): The chromosome for which to process the data.
@@ -408,20 +388,6 @@ def count_crosslinks(
         This function expects that `annotation_fn` returns an iterator over dictionaries with keys:
         "chrom", "start", "end", "gene_id", "uniq_id", "strand" and any additional required metadata
     """
-    expected_cols: Set[str] = {
-        "chrom",
-        "begin",
-        "end",
-        "gene_id",
-        "annotation",
-        "strand",
-        "sample",
-        "pos_counts",
-    }
-    if expected_cols != set(schema.names):
-        raise RuntimeError(
-            f"Output column name discrepancy! expected column names:{','.join(expected_cols)} found column names: {','.join(schema.names)}"
-        )
     logger.debug(
         f"Process id {mp.current_process().pid}, chromosome: {chrom}, temp. file: {output}"
     )
@@ -454,36 +420,35 @@ def count_crosslinks(
         if len(indices) == 0:
             continue
         name_dat: List[str] = ann.name.split("@")
-        nr_region, total_nr_region = name_dat[4].split("/")
         if len(name_dat) < 6:
             logger.warning(
                 f"{chrom} Window {ann.start}:{ann.end}({ann.strand}) does not have enough attributes seperated by '@' in name column: {ann.name}. Expected at least 6 attributes!"
             )
             continue
+        nr_region, total_nr_region = name_dat[4].split("/")
+        if len(name_dat) == 6:
+            # unique id is the last attribute
+            out_dict["uniq_id"].append(name_dat[-1])
+            out_dict["window_number"].append(None)
+        elif len(name_dat) == 7:
+            # unique id is the second last attribute
+            out_dict["uniq_id"].append(name_dat[-2])
+            # window number is the last attribute
+            out_dict["window_number"].append(int(name_dat[-1]))
         out_dict["chrom"].append(chrom)
         out_dict["begin"].append(ann.start)
         out_dict["end"].append(ann.end)
         out_dict["gene_id"].append(name_dat[0])
+        out_dict["gene_name"].append(name_dat[1])
+        out_dict["gene_type"].append(name_dat[2])
+        out_dict["feature"].append(name_dat[3])
+        out_dict["nr_of_region"].append(nr_region)
+        out_dict["total_region"].append(total_nr_region)
         out_dict["strand"].append(ann.strand)
         out_dict["sample"].append(sample_name)
         out_dict["pos_counts"].append(
             list(map(tuple, crosslinks[ann.strand].counts[indices]))
         )
-        annotation: Dict[str, str] = {
-            "gene_name": name_dat[1],
-            "gene_type": name_dat[2],
-            "feature": name_dat[3],
-            "nr_of_region": nr_region,
-            "total_region": total_nr_region,
-            "uniq_id": name_dat[5],
-        }
-        if len(name_dat) == 7:
-            annotation["window_number"] = name_dat[6]
-        out_dict["annotation"].append(annotation)
-        # out_dict["positions"].append(
-        #     (crosslinks[ann.strand].counts[indices, 0]).tolist()
-        # )
-        # out_dict["counts"].append((crosslinks[ann.strand].counts[indices, 1]).tolist())
         used += 1
     if len(out_dict) > 0:
         logger.info(

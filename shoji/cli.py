@@ -9,6 +9,7 @@ from .count import Count
 from .create_matrix import CreateMatrix
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
+from .helpers import check_bam_index
 from .tabix_converter import ToTabix
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -73,7 +74,9 @@ verbose_option = click.option(
     "-v",
     "--verbose",
     "verbose",
-    type=click.Choice(["DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]),
+    type=click.Choice(
+        ["DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
+    ),
     default="INFO",
     show_default=True,
     help="Verbose level",
@@ -369,6 +372,34 @@ def create_sliding_windows(
     help="Maximum read length",
 )
 @click.option(
+    "-a",
+    "--min_aln_len",
+    "min_aln_len",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Minimum aligned read length",
+)
+@click.option(
+    "-f",
+    "--aln_frac",
+    "aln_frac",
+    type=click.FloatRange(min=0.0, max=1.0, clamp=True),
+    default=0.0,
+    show_default=True,
+    help="Minimum fraction of aligned read length to total read length for crosslink site extraction. If set to 0, all reads are considered regardless of alignment length",
+)
+@click.option(
+    "-y",
+    "--mismatch_frac",
+    "mismatch_frac",
+    type=click.FloatRange(min=0.0, max=1.0, clamp=True),
+    default=1.0,
+    show_default=True,
+    help="Maximum fraction of mismatches allowed in the read, as a fraction of aligned length. If set to 1.0, all reads are considered regardless of mismatch fraction",
+)
+# @TODO: is this option needed?
+@click.option(
     "-l",
     "--max_interval_len",
     "max_interval_len",
@@ -405,6 +436,9 @@ def extract(
     min_qual: int,
     min_len: int,
     max_len: int,
+    min_aln_len: int,
+    aln_frac: float,
+    mismatch_frac: float,
     max_interval_len: int,
     primary: bool,
     ignore_PCR: bool,
@@ -426,6 +460,8 @@ def extract(
     `shoji extract -b <bam> -o <out.bed> -e 1 -s s -g -1 -c 6`
     """
     setup_logger(verbose)
+    # check if bam index exists
+    check_bam_index(bam)
     with BamParser(
         bam=bam, out=out, use_tabix=tabix, cores=cores, tmp_dir=tmp_dir
     ) as bp:
@@ -435,7 +471,10 @@ def extract(
             offset=offset,
             min_qual=min_qual,
             min_len=min_len,
+            aln_frac=aln_frac,
+            mismatch_frac=mismatch_frac,
             max_len=max_len,
+            min_aln_len=min_aln_len,
             max_interval_len=max_interval_len,
             primary=primary,
             ignore_PCR=ignore_PCR,
@@ -540,6 +579,15 @@ def count(
     help="Suffix to filter count files in *in_dir*. Either *--prefix* or *--suffix* MUST be provided",
 )
 @click.option(
+    "-f",
+    "--format",
+    "format",
+    type=click.Choice(["csv", "parquet"]),
+    default="csv",
+    multiple=False,
+    help="Output formats: csv or parquet. Default: csv. Csv format also supports gzipped output",
+)
+@click.option(
     "-a",
     "--annotation",
     "annotation",
@@ -569,7 +617,7 @@ def count(
     is_flag=True,
     default=False,
     show_default=True,
-    help="Default behavior: If adjacent overlapping windows have same crosslink counts across all samples, write only the most 5' widow to output file. Use this flag disable this and to write all windows",
+    help="Default behavior: If adjacent overlapping windows have same crosslink counts across all samples, write only the most 5' window to output file. Use this flag disable this feature and to write all windows",
 )
 @cores_option
 @tmp_option
@@ -582,6 +630,7 @@ def create_matrix(
     prefix: Optional[str] = None,
     suffix: Optional[str] = None,
     allow_duplicates: bool = False,
+    format: str = "csv",
     cores: int = 1,
     tmp_dir: Optional[str] = None,
     verbose: str = "INFO",
@@ -598,8 +647,11 @@ def create_matrix(
     (iii) Optional: crosslink count matrix with max count per window per sample
     """
     if prefix is None and suffix is None:
-        raise click.ClickException("Either --prefix or --suffix must be specified")
+        raise click.ClickException(
+            "Either --prefix or --suffix must be specified"
+        )
     setup_logger(verbose)
+    # @TODO: "guess" format based on output file names and complain if not consistent
     with CreateMatrix(
         in_dir=in_dir,
         annotation=annotation,
@@ -607,6 +659,7 @@ def create_matrix(
         max_out=max_out,
         prefix=prefix,
         suffix=suffix,
+        format=format,
         cores=cores,
         tmp_dir=tmp_dir,
     ) as cm:
