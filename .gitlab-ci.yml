@@ -3,13 +3,17 @@ stages:
   - build
   - deploy
 
-unit_test:
-  stage: test
-  image: python:3.12
+# YAML anchor for reusable before_script
+.poetry_setup: &poetry_setup
   before_script:
     - pip install poetry
     - poetry config virtualenvs.create false
     - poetry install
+
+unit_test:
+  stage: test
+  image: python:3.12
+  <<: *poetry_setup  # Include the reusable before_script
   script:
     - poetry run pytest
   
@@ -18,10 +22,7 @@ build_whl:
   needs:
     - unit_test
   image: python:3.12
-  before_script:
-    - pip install poetry
-    - poetry config virtualenvs.create false
-    - poetry install
+  <<: *poetry_setup
   script:
     - poetry build --format wheel
   artifacts:
