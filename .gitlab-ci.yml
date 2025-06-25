@@ -3,8 +3,14 @@ stages:
   - build
   - deploy
 
-# YAML anchor for reusable before_script
+# YAML anchor for reusable configuration
 .poetry_setup: &poetry_setup
+  image: python:3.12
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-poetry"
+    paths:
+      - .cache/pip
+      - .cache/pypoetry
   before_script:
     - pip install poetry
     - poetry config virtualenvs.create false
@@ -12,8 +18,7 @@ stages:
 
 unit_test:
   stage: test
-  image: python:3.12
-  <<: *poetry_setup  # Include the reusable before_script
+  <<: *poetry_setup  # Include reusable config
   script:
     - poetry run pytest
   
@@ -21,8 +26,7 @@ build_whl:
   stage: build
   needs:
     - unit_test
-  image: python:3.12
-  <<: *poetry_setup
+  <<: *poetry_setup  
   script:
     - poetry build --format wheel
   artifacts:
