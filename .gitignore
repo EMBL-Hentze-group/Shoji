@@ -20,3 +20,4 @@ bam/
 logs/
 output/
 .project
+**/__pycache__/

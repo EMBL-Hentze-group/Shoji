@@ -7,3 +7,4 @@ sortedcontainers
 click
 rich-click
 loguru
+pytest
