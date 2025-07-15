@@ -1,5 +1,5 @@
 # Shoji
- Shoji is a a flexible command-line toolset for the analysis of iCLIP and eCLIP sequencing data. It is designed as a replacement [htseq-clip](https://htseq-clip.readthedocs.io/en/latest/), providing streamlined workflows for annotation parsing, crosslink site extraction, counting, and matrix generation.
+ Shoji is a a flexible command-line toolset for the analysis of iCLIP and eCLIP sequencing data. It is designed as a replacement for [htseq-clip](https://htseq-clip.readthedocs.io/en/latest/), providing streamlined workflows for annotation parsing, crosslink site extraction, counting, and matrix generation.
 
 [Shoji](https://en.wikipedia.org/wiki/Shoji)
 

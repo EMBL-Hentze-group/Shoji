@@ -2,6 +2,8 @@
 *.pyc
 RemoteSystemsTempFiles/
 **/_build/*
+**/_static/*
+**/_templates/*
 build/
 dist/
 images/

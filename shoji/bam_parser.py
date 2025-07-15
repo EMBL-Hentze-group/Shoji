@@ -51,7 +51,9 @@ class BamParser:
         else:
             if not Path(tmp_dir).exists():
                 raise FileNotFoundError(f"Directory {tmp_dir} does not exist")
-            self._tmp: Path = Path(tmp_dir) / next(tempfile._get_candidate_names())
+            self._tmp: Path = Path(tmp_dir) / next(
+                tempfile._get_candidate_names()
+            )
         self._tmp.mkdir(parents=True, exist_ok=True)
         logger.debug(
             f"Using {str(self._tmp)} as temp. directory",
@@ -181,7 +183,9 @@ class BamParser:
         """
         sites: Set[str] = {"s", "i", "d", "m", "e"}
         if site not in sites:
-            raise NotImplementedError(f"Site must be one of {sites}, but found {site}")
+            raise NotImplementedError(
+                f"Site must be one of {sites}, but found {site}"
+            )
         if site == "s":
             return partial(extract_single_site, extract_fn=_start)
         elif site == "e":
@@ -475,7 +479,9 @@ def _middle(aln: pysam.AlignedSegment, offset: int) -> Tuple[int, int]:
     """
     match_ops: Set[int] = {0, 4, 5}
     cigars: Set[int] = set([x[0] for x in aln.cigartuples])  # type: ignore
-    mid: int = int(Decimal(aln.query_alignment_length / 2).quantize(0, ROUND_HALF_UP))
+    mid: int = int(
+        Decimal(aln.query_alignment_length / 2).quantize(0, ROUND_HALF_UP)
+    )
 
     if (len(cigars - match_ops) == 0) and (aln.is_reverse):
         # only match, soft clip, hard clip, negative strand

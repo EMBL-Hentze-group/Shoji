@@ -1,20 +1,20 @@
 [tool.poetry]
 name = "shoji"
-version = "0.30.0"
+version = "0.31.0"
 description = "post process *clip reads after alignment. Replacement for htseq-clip"
 authors = ["Sudeep Sahadevan"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
-pysam = "^0.23.1"
+python = ">=3.11,<4.0"
 cython = "^3.0.10"
 numpy = "^1.26.4"
 pyarrow = "^20.0.0"
 sortedcontainers = "^2.4.0"
 rich-click = "^1.8.3"
 loguru = "^0.7.2"
+pysam = "^0.23.3"
 
 [tool.poetry.scripts]
 shoji = "shoji.cli:run"
@@ -26,6 +26,13 @@ mypy = "^1.16.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.4.1"
+
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^8.2.3"
+sphinx-rtd-theme = "^3.0.2"
+sphinx-autobuild = "^2024.10.3"
+sphinxcontrib-napoleon = "^0.7"
 
 [build-system]
 requires = ["poetry-core"]
