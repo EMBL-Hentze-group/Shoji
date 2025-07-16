@@ -3,12 +3,14 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-# -- Project information -----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
-import os
 import sys
 
-# sys.path.insert(0, os.path.abspath('.'))
+# -- Project information -----------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+from pathlib import Path
+
+basedir = str(Path(__file__).parent.parent.parent.resolve())
+sys.path.insert(0, basedir)
 
 project = "Shoji"
 copyright = "2025, Sudeep Sahadevan"
@@ -18,7 +20,7 @@ master_doc = "index"
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx_rtd_theme"]
+extensions = ["sphinx-rtd-theme"]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
