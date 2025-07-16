@@ -20,6 +20,7 @@ quick installation
 ------------------
 
 To install the latest version of Shoji, use the following command:
+
 .. code-block:: sh 
 
     $ pip install shoji
