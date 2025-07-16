@@ -1,7 +1,12 @@
+   
+![GitHub](https://img.shields.io/github/license/EMBL-Hentze-group/Shoji)
+
 # Shoji
  Shoji is a a flexible command-line toolset for the analysis of iCLIP and eCLIP sequencing data. It is designed as a replacement for [htseq-clip](https://htseq-clip.readthedocs.io/en/latest/), providing streamlined workflows for annotation parsing, crosslink site extraction, counting, and matrix generation.
 
-[Shoji](https://en.wikipedia.org/wiki/Shoji)
+- **Documentation** : [readthedocs](https://shoji.readthedocs.io/en/latest/)
+- **Submit an issue**: [github](https://github.com/EMBL-Hentze-group/Shoji/issues)
+
 
 ## Features
 - Annotation Parsing: Extract and flatten features from GFF3 files to BED format.
@@ -19,4 +24,5 @@
 - `count` function output is only available in Apache parquet format
 - `createMatrix` by default do not write duplicate windows. If adjacent overlapping windows have same crosslink counts across all samples, this function now writes only the most 5' (relative to strand) window to output file.  
 
+Name inspired from: [Shoji](https://en.wikipedia.org/wiki/Shoji)
 
