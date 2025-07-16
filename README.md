@@ -24,5 +24,7 @@
 - `count` function output is only available in Apache parquet format
 - `createMatrix` by default do not write duplicate windows. If adjacent overlapping windows have same crosslink counts across all samples, this function now writes only the most 5' (relative to strand) window to output file.  
 
+Developed at [Hentze lab, EMBL Heidelberg](https://www.embl.org/groups/hentze/)
+
 Name inspired from: [Shoji](https://en.wikipedia.org/wiki/Shoji)
 
