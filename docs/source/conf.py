@@ -9,6 +9,8 @@ import sys
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 from pathlib import Path
 
+import sphinx_rtd_theme
+
 basedir = str(Path(__file__).parent.parent.parent.resolve())
 sys.path.insert(0, basedir)
 
@@ -37,4 +39,5 @@ html_theme_options = {
     "includehidden": True,
     "titles_only": False,
 }
+html_static_path = ["_static"]
 html_static_path = ["_static"]
