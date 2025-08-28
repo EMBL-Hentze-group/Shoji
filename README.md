@@ -7,6 +7,11 @@
 - **Documentation** : [readthedocs](https://shoji.readthedocs.io/en/latest/)
 - **Submit an issue**: [github](https://github.com/EMBL-Hentze-group/Shoji/issues)
 
+## Installation
+
+```
+pip install shoji
+```
 
 ## Features
 - Annotation Parsing: Extract and flatten features from GFF3 files to BED format.
