@@ -48,18 +48,26 @@ def check_tabix(annotation) -> bool:
     return False
 
 
-def check_bam_index(bam: str) -> None:
+def check_bam_index(bam: str) -> str:
     """_check_bam_index check for BAM indices
     Helper function to check for BAM indices (.bai)
     Args:
         bam (str): Path to the BAM file.
     Raises:
         FileNotFoundError: If the BAM index file does not exist.
+    Returns:
+        str, index file name
     """
     bp: Path = Path(bam)
-    if (not bp.with_name(f"{bp.name}.bai").exists()) and (
-        not bp.with_name(f"{bp.name}.csi").exists()
-    ):
+    bai: Path = bp.with_name(f"{bp.name}.bai")
+    csi: Path = bp.with_name(f"{bp.name}.csi")
+    if bai.exists():
+        logger.debug(f"Found BAM index file: {str(bai)}")
+        return str(bai)
+    if csi.exists():
+        logger.debug(f"Found BAM index file: {str(csi)}")
+        return str(csi)
+    else:
         # @TODO: improve this!
         raise FileNotFoundError(
             f"BAM index file not found for {bam}. Please run `samtools index {bam}` first!"

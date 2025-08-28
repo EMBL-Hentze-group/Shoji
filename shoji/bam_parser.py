@@ -24,6 +24,7 @@ class BamParser:
     def __init__(
         self,
         bam: str,
+        index: str,
         out: str,
         use_tabix: bool,
         cores: int,
@@ -33,12 +34,14 @@ class BamParser:
 
         Args:
             bam: bam file to parse. Must be co-ordinate sorted and indexed
+            index: BAM index file name
             out: Output file name (bed format)
             use_tabix: boolean, if True, use tabix to index the output file
             cores: int, number of cores to use
             tmp_dir: Tmp. directory to store intermediate outputs. Defaults to None.
         """
         self.bam: str = bam
+        self.index: str = index
         self.out: str = out
         self.use_tabix: bool = use_tabix
         # check if the output file suffix is in the list of tabix supported formats
@@ -91,7 +94,11 @@ class BamParser:
         Collect chromosome names from bam header
         """
         with pysam.AlignmentFile(
-            self.bam, mode="rb", check_sq=True, require_index=True
+            self.bam,
+            mode="rb",
+            check_sq=True,
+            require_index=True,
+            index_filename=self.index,
         ) as _bam:
             header = dict(_bam.header)  # type: ignore
             if "SQ" not in header:  # type: ignore
@@ -147,6 +154,7 @@ class BamParser:
                     extract_fn,
                     args=(
                         self.bam,
+                        self.index,
                         chrom,
                         temp_file,
                         mate,
@@ -200,6 +208,7 @@ class BamParser:
 
 def extract_single_site(
     bam: str,
+    index: str,
     chrom: str,
     output: str,
     mate: int,
@@ -221,6 +230,7 @@ def extract_single_site(
     Insertion and deletion sites are not considered here as there can be more than one such event per read
     Args:
         bam: str, BAM file to parse, must be co-ordinate sorted and indexed
+        index: str, BAM index file name
         chrom: str, Chromosome name to extract reads
         output: str, tmp. output file name
         site: str, site to extract, could be either s (start), m (middle) or e (end)
@@ -242,7 +252,7 @@ def extract_single_site(
     )
     used, discarded = 0, 0
     positions: SortedList = SortedList()
-    with pysam.AlignmentFile(bam, mode="rb") as _bam:
+    with pysam.AlignmentFile(bam, mode="rb", index_filename=index) as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
             if _discard_read(
                 aln,
@@ -284,6 +294,7 @@ def extract_single_site(
 
 def extract_multiple_sites(
     bam: str,
+    index: str,
     chrom: str,
     output: str,
     mate: int,
@@ -304,6 +315,7 @@ def extract_multiple_sites(
 
     Args:
         bam: str, bam file to parse, must be co-ordinate sorted and indexed
+        index: str, index file name
         chrom: str, chromosome name
         output: str, output file name
         mate: int, mate to extract the crosslink sites from. Must be one of [1,2]
@@ -324,7 +336,7 @@ def extract_multiple_sites(
     )
     used, discarded = 0, 0
     positions: SortedList = SortedList()
-    with pysam.AlignmentFile(bam, mode="rb") as _bam:
+    with pysam.AlignmentFile(bam, mode="rb", index_filename=index) as _bam:
         for aln in _bam.fetch(chrom, multiple_iterators=True):
             if _discard_read(
                 aln,

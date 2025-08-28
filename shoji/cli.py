@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from typing import Optional
 
 import rich_click as click
@@ -310,6 +311,15 @@ def create_sliding_windows(
     help="Alignment bam file. Must be co-ordinate sorted and indexed",
 )
 @click.option(
+    "-i",
+    "--index",
+    "index",
+    type=click.Path(),
+    default=None,
+    show_default=True,
+    help="BAM index file (BAI or CSI). Only required if the index is not in the same directory as the bam file",
+)
+@click.option(
     "-o",
     "--out",
     "out",
@@ -446,6 +456,7 @@ def extract(
     cores: int,
     tmp_dir: str,
     verbose: str,
+    index: Optional[str],
 ) -> None:
     """
     Extract crosslink sites from bam file.
@@ -461,9 +472,17 @@ def extract(
     """
     setup_logger(verbose)
     # check if bam index exists
-    check_bam_index(bam)
+    if index is None:
+        index = check_bam_index(bam)
+    elif not Path(index).exists():
+        raise FileNotFoundError(f"BAM index file {index} not found!")
     with BamParser(
-        bam=bam, out=out, use_tabix=tabix, cores=cores, tmp_dir=tmp_dir
+        bam=bam,
+        index=index,
+        out=out,
+        use_tabix=tabix,
+        cores=cores,
+        tmp_dir=tmp_dir,
     ) as bp:
         bp.extract(
             site=site,
