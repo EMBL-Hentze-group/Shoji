@@ -15,11 +15,23 @@ def bam():
     return str(bam_file)
 
 
+@pytest.fixture(scope="module")
+def index():
+    """
+    return a bam index file for testing
+    """
+    index_file = PurePath(
+        "tests", "data", "xlinks", "ENCFF511HSJ_histones.bam.bai"
+    )
+    return str(index_file)
+
+
 @pytest.mark.parametrize(
-    "in_bam,out_file,temp_dir,expected_sites,site,offset,success",
+    "in_bam,index_file,out_file,temp_dir,expected_sites,site,offset,success",
     [
         (
             "bam",
+            "index",
             "output_gz_file",
             "tmp_dir",
             "expected_start_sites",
@@ -29,6 +41,7 @@ def bam():
         ),
         (
             "bam",
+            "index",
             "output_gz_file",
             "tmp_dir",
             "expected_middle_sites",
@@ -38,6 +51,7 @@ def bam():
         ),
         (
             "bam",
+            "index",
             "output_gz_file",
             "tmp_dir",
             "expected_end_sites",
@@ -47,6 +61,7 @@ def bam():
         ),
         (
             "bam",
+            "index",
             "output_gz_file",
             "tmp_dir",
             "expected_deletion_sites",
@@ -56,6 +71,7 @@ def bam():
         ),
         (
             "bam",
+            "index",
             "output_gz_file",
             "tmp_dir",
             "expected_deletion_sites",
@@ -66,11 +82,20 @@ def bam():
     ],
 )
 def test_start_sites(
-    in_bam, out_file, temp_dir, expected_sites, site, offset, success, request
+    in_bam,
+    index_file,
+    out_file,
+    temp_dir,
+    expected_sites,
+    site,
+    offset,
+    success,
+    request,
 ):
     """
     Parameters:
         in_bam (str): The fixture name for the input BAM file.
+        index_file (str): The fixture name for the BAM index file.
         out_file (str): The fixture name for the output file.
         temp_dir (str): The fixture name for the temporary directory.
         expected_sites (str): The fixture name for the expected output sites file.
@@ -83,6 +108,7 @@ def test_start_sites(
 
     with BamParser(
         bam=request.getfixturevalue(in_bam),
+        index=request.getfixturevalue(index_file),
         out=request.getfixturevalue(out_file),
         tmp_dir=request.getfixturevalue(temp_dir),
         use_tabix=False,
