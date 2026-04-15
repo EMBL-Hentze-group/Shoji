@@ -116,6 +116,7 @@ class BamParser:
         min_len: int,
         max_len: int,
         min_aln_len: int,
+        n_aln: int,
         aln_frac: float,
         mismatch_frac: float,
         max_interval_len: int,
@@ -133,6 +134,7 @@ class BamParser:
             min_len: int, Minimum read length
             max_len: int, Maximum read length
             min_aln_len: int, Minimum aligned read length
+            n_aln: int, Number of loci read maps to,
             aln_frac: float, Minimum fraction of aligned bases in the read
             mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
             max_interval_len: int, Maximum interval length, for paired end reads, splice length otherwise
@@ -163,6 +165,7 @@ class BamParser:
                         min_len,
                         max_len,
                         min_aln_len,
+                        n_aln,
                         aln_frac,
                         mismatch_frac,
                         max_interval_len,
@@ -217,6 +220,7 @@ def extract_single_site(
     min_len: int,
     max_len: int,
     min_aln_len: int,
+    n_aln: int,
     aln_frac: float,
     mismatch_frac: float,
     max_interval_len: int,
@@ -240,6 +244,7 @@ def extract_single_site(
         min_len: int, minimum read length
         max_len: int, maximum read length
         min_aln_len: int, minimum aligned read length
+        n_aln: int, Number of loci read maps to,
         aln_frac: float, minimum fraction of aligned bases in the read
         mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
         max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
@@ -261,6 +266,7 @@ def extract_single_site(
                 min_len,
                 max_len,
                 min_aln_len,
+                n_aln,
                 aln_frac,
                 mismatch_frac,
                 max_interval_len,
@@ -303,6 +309,7 @@ def extract_multiple_sites(
     min_len: int,
     max_len: int,
     min_aln_len: int,
+    n_aln: int,
     aln_frac: float,
     mismatch_frac: float,
     max_interval_len: int,
@@ -324,6 +331,7 @@ def extract_multiple_sites(
         min_len: int, minimum read length
         max_len: int, maximum read length
         min_aln_len: int, minimum aligned read length
+        n_aln: int, Number of loci read maps to,
         aln_frac: float, minimum fraction of aligned bases in the read
         mismatch_frac: float, Maximum fraction of mismatches to alignment length, (needs tag "NM" in the bam file)
         max_interval_len: int, maximum interval length, for paired end reads, splice length otherwise
@@ -345,6 +353,7 @@ def extract_multiple_sites(
                 min_len,
                 max_len,
                 min_aln_len,
+                n_aln,
                 aln_frac,
                 mismatch_frac,
                 max_interval_len,
@@ -389,6 +398,7 @@ def _discard_read(
     min_len: int,
     max_len: int,
     min_aln_len: int,
+    n_aln: int,
     aln_frac: float,
     mismatch_frac: float,
     max_interval_len: int,
@@ -404,7 +414,8 @@ def _discard_read(
         qual: int, Minimum alignment quality
         min_len: int, Minimum read length
         max_len: int, Maximum read length
-        min_aln_len: int, Minimum aligned read length
+        min_aln_len: int, Minimum aligned read length,
+        n_aln: int, Number of loci read maps to,
         aln_frac: float, Minimum fraction of aligned bases in the read
         aln_frac: float, Minimum fraction of aligned bases in the read
         mismatch_frac: float, maximum fraction of mismatches to alignment length (needs tag "NM" in the bam file)
@@ -437,8 +448,10 @@ def _discard_read(
         # only check for mismatches if the tag "NM" is present
         if (aln.get_tag("NM") / aln.query_alignment_length) > mismatch_frac:  # type: ignore
             return True
-        else:
-            return False
+    if aln.has_tag("NH"):
+        # only check for number of alignments if the tag "NH" is present
+        if aln.get_tag("NH") > n_aln:  # type: ignore
+            return True
     return False
 
 
