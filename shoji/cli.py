@@ -1,4 +1,5 @@
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
@@ -59,7 +60,7 @@ def setup_logger(verbose) -> None:
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
-@click.version_option()
+@click.version_option(version=version("shoji"), prog_name="shoji")
 def run() -> None:
     """
     Shoji: A flexible toolset for the analysis of iCLIP and eCLIP sequencing data.
@@ -391,6 +392,15 @@ def create_sliding_windows(
     help="Minimum aligned read length",
 )
 @click.option(
+    "-j",
+    "--n_aln",
+    "n_aln",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Maximum number of loci a read is allowed to map to for crosslink site extraction",
+)
+@click.option(
     "-f",
     "--aln_frac",
     "aln_frac",
@@ -447,6 +457,7 @@ def extract(
     min_len: int,
     max_len: int,
     min_aln_len: int,
+    n_aln: int,
     aln_frac: float,
     mismatch_frac: float,
     max_interval_len: int,
@@ -490,6 +501,7 @@ def extract(
             offset=offset,
             min_qual=min_qual,
             min_len=min_len,
+            n_aln=n_aln,
             aln_frac=aln_frac,
             mismatch_frac=mismatch_frac,
             max_len=max_len,

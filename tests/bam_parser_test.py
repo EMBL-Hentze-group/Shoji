@@ -125,6 +125,7 @@ def test_start_sites(
             mismatch_frac=1.0,
             max_len=10000,
             min_aln_len=0,
+            n_aln=10,
             max_interval_len=10000,
             ignore_PCR=False,
         )

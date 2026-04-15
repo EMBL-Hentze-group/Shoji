@@ -69,15 +69,15 @@ class GFF3parser:
         self._gene_feature_map: Dict[str, Gene] = {}
         # List of features from pyarrow table
         self._feats: List[Dict] = []
-        # save per gene features in a dictionary
-        self._gene_feature_map: Dict[str, Gene] = {}
         # all exon (feature) gene like feature co-ordinates per strand
         self._chrom_intervals = ChromInterval()
         self._chrom_appender = self._interval_appender()
         # heap to store and sort co-ordinates
         self._heap: SortedList = SortedList()
         # output write to write outputs
-        self._ow = output_writer(self.out, use_tabix=self.use_tabix, preset="bed")
+        self._ow = output_writer(
+            self.out, use_tabix=self.use_tabix, preset="bed"
+        )
         # hack: in some gff3 files gene ids are repeated for paralogs (mainly in X and Y chromosomes.)
         # in such cases avoid adding the same gene id for multiple genes
         self._gene_ids_visited: Dict[str, int] = {}
@@ -110,7 +110,9 @@ class GFF3parser:
         # gff3 pyarrow table
         gff3_pa = self._read_gff3()
         if gff3_pa.shape[0] == 0:
-            raise RuntimeError(f"Cannot parse annotation features from {self.gff}!")
+            raise RuntimeError(
+                f"Cannot parse annotation features from {self.gff}!"
+            )
         chroms: List[str] = sorted(gff3_pa.column("seqname").unique().tolist())
         strands: List[str] = gff3_pa.column("strand").unique().tolist()
         logger.info(
@@ -158,7 +160,9 @@ class GFF3parser:
         # clear the dict first
         self._gene_tree = {}
         for f in self._feats:
-            attribs: Dict[str, str] = dict(re.findall(self._gffre, f["attributes"]))
+            attribs: Dict[str, str] = dict(
+                re.findall(self._gffre, f["attributes"])
+            )
             if self.idx_id in attribs:
                 uid: str = attribs[self.idx_id]
             else:
@@ -176,7 +180,9 @@ class GFF3parser:
                 continue
             self._gene_tree[uid].add_parent(attribs[self.parent_id])
             if attribs[self.parent_id] not in self._gene_tree:
-                self._gene_tree[attribs[self.parent_id]] = Node(attribs[self.parent_id])
+                self._gene_tree[attribs[self.parent_id]] = Node(
+                    attribs[self.parent_id]
+                )
             self._gene_tree[attribs[self.parent_id]].add_child(uid)
 
     def _parse_gene_features(self, feature_type: str = "exon") -> None:
@@ -218,7 +224,9 @@ class GFF3parser:
                 for g in genes:
                     if g not in self._gene_feature_map:
                         self._gene_feature_map[g] = Gene()
-                    self._gene_feature_map[g].add_feature(f["type"], start, f["end"])
+                    self._gene_feature_map[g].add_feature(
+                        f["type"], start, f["end"]
+                    )
                 # add feature intervals to chromosome, strand
                 self._chrom_appender(f["strand"], start, f["end"])
             elif (self._is_parent(uid)) or (
@@ -226,7 +234,9 @@ class GFF3parser:
             ):
                 # either a gene or
                 # a gene like feature with id not found in the gene dependanch graph
-                self._add_gene_info(f["seqname"], start, f["end"], f["strand"], attribs)
+                self._add_gene_info(
+                    f["seqname"], start, f["end"], f["strand"], attribs
+                )
                 if gene_like_feature:
                     # add feature intervals to chromosome, strand
                     self._chrom_appender(f["strand"], start, f["end"])
@@ -279,7 +289,10 @@ class GFF3parser:
         """
         if idx not in self._gene_tree:
             return False
-        return self._gene_tree[idx].is_leaf and not self._gene_tree[idx].is_singleton
+        return (
+            self._gene_tree[idx].is_leaf
+            and not self._gene_tree[idx].is_singleton
+        )
 
     def _is_parent(self, idx: str) -> bool:
         """is_parent
@@ -293,7 +306,10 @@ class GFF3parser:
         """
         if idx not in self._gene_tree:
             return False
-        return self._gene_tree[idx].is_root and not self._gene_tree[idx].is_singleton
+        return (
+            self._gene_tree[idx].is_root
+            and not self._gene_tree[idx].is_singleton
+        )
 
     def _is_singleton(self, idx: str) -> bool:
         """is_singleton
@@ -310,7 +326,12 @@ class GFF3parser:
         return self._gene_tree[idx].is_singleton
 
     def _add_gene_info(
-        self, chrom: str, start: int, end: int, strand: str, attribs: Dict[str, str]
+        self,
+        chrom: str,
+        start: int,
+        end: int,
+        strand: str,
+        attribs: Dict[str, str],
     ) -> None:
         """_add_gene_info add gene info
         Helper function, add gene info to self._gene_feature_map dictionary
@@ -390,7 +411,10 @@ class GFF3parser:
             if len(tagged_exons) == 1:
                 one_exon += 1
                 continue
-            elif self.split_intron and self._chrom_intervals.strand_len(dat.strand) > 0:
+            elif (
+                self.split_intron
+                and self._chrom_intervals.strand_len(dat.strand) > 0
+            ):
                 overlaps: Interval = self._chrom_intervals.find_overlaps(
                     dat.strand, dat.exon_start, dat.exon_end
                 )
