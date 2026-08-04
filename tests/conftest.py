@@ -235,3 +235,178 @@ def expected_deletion_counts():
         "deletion_regions.parquet",
     )
     return str(del_counts)
+
+
+######## createMatrix function fixtures ########
+
+
+@pytest.fixture
+def output_parquet_file_annotation(tmp_dir):
+    """Create a temporary output file path for annotation matrix."""
+    tmp_out = tempfile.NamedTemporaryFile(
+        dir=tmp_dir, delete=False, suffix=".parquet"
+    )
+    tmp_out.close()
+    yield tmp_out.name
+    Path(tmp_out.name).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def output_parquet_file_count(tmp_dir):
+    """Create a temporary output file path for count matrix."""
+    tmp_out = tempfile.NamedTemporaryFile(
+        dir=tmp_dir, delete=False, suffix=".parquet"
+    )
+    tmp_out.close()
+    yield tmp_out.name
+    Path(tmp_out.name).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def output_parquet_file_max(tmp_dir):
+    """Create a temporary output file path for max matrix."""
+    tmp_out = tempfile.NamedTemporaryFile(
+        dir=tmp_dir, delete=False, suffix=".parquet"
+    )
+    tmp_out.close()
+    yield tmp_out.name
+    Path(tmp_out.name).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def count_dir():
+    """
+    expected region counts output
+    """
+    count_dir = PurePath(
+        "tests",
+        "data",
+        "counts",
+    )
+    return str(Path(count_dir).resolve())
+
+
+@pytest.fixture
+def start_annotation():
+    """
+    expected region counts output
+    """
+    start_annotation = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_annotation.parquet",
+    )
+    return str(start_annotation)
+
+
+@pytest.fixture
+def start_annotation_dup():
+    """
+    expected region counts output
+    """
+    start_annotation_dup = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_annotation_dup.parquet",
+    )
+    return str(start_annotation_dup)
+
+
+@pytest.fixture
+def middle_annotation():
+    """
+    expected region counts output
+    """
+    middle_annotation = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "middle_annotation.parquet",
+    )
+    return str(middle_annotation)
+
+
+@pytest.fixture
+def start_count():
+    """
+    expected region counts output
+    """
+    start_count = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_counts.parquet",
+    )
+    return str(start_count)
+
+
+@pytest.fixture
+def start_count_dup():
+    """
+    expected region counts output
+    """
+    start_count_dup = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_counts_dup.parquet",
+    )
+    return str(start_count_dup)
+
+
+@pytest.fixture
+def middle_count():
+    """
+    expected region counts output
+    """
+    middle_count = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "middle_counts.parquet",
+    )
+    return str(middle_count)
+
+
+@pytest.fixture
+def start_max():
+    """
+    expected region counts output
+    """
+    start_max = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_max.parquet",
+    )
+    return str(start_max)
+
+
+@pytest.fixture
+def start_max_dup():
+    """
+    expected region counts output
+    """
+    start_max_dup = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "start_max_dup.parquet",
+    )
+    return str(start_max_dup)
+
+
+@pytest.fixture
+def middle_max():
+    """
+    expected region counts output
+    """
+    middle_max = PurePath(
+        "tests",
+        "data",
+        "matrices",
+        "middle_max.parquet",
+    )
+    return str(middle_max)

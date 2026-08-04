@@ -1,3 +1,4 @@
+import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -11,7 +12,7 @@ from .count import Count
 from .create_matrix import CreateMatrix
 from .create_sliding_windows import SlidingWindows
 from .gff3_parser import GFF3parser
-from .helpers import check_bam_index
+from .helpers import check_bam_index, set_cores
 from .tabix_converter import ToTabix
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -682,6 +683,14 @@ def create_matrix(
             "Either --prefix or --suffix must be specified"
         )
     setup_logger(verbose)
+    # set cores here, as polars do not support dynamic core allocation
+    ncores: int = set_cores(cores)
+    polars_cores: int = max(1, round(ncores * 0.7))
+    pa_compute_cores: int = max(1, ncores - polars_cores)
+    os.environ.setdefault("POLARS_MAX_THREADS", str(polars_cores))
+    logger.debug(
+        f"Using {polars_cores} cores for polars and {pa_compute_cores} cores for pyarrow"
+    )
     # @TODO: "guess" format based on output file names and complain if not consistent
     with CreateMatrix(
         in_dir=in_dir,
@@ -691,7 +700,7 @@ def create_matrix(
         prefix=prefix,
         suffix=suffix,
         format=format,
-        cores=cores,
+        cores=pa_compute_cores,
         tmp_dir=tmp_dir,
     ) as cm:
         cm.create_matrices(allow_duplicates=allow_duplicates)
