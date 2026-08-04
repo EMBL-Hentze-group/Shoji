@@ -136,8 +136,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-=======
->>>>>>> 48e5259 (fix Docker image build)
-
-
->>>>>>> 87876ef (cm-opt  merge)
