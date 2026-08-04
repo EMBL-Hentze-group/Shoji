@@ -135,6 +135,9 @@ jobs:
           file: ./dist/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+<<<<<<< HEAD
           labels: ${{ steps.meta.outputs.labels }}
+=======
+>>>>>>> 48e5259 (fix Docker image build)
 
 
