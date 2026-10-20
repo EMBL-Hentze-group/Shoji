@@ -83,11 +83,6 @@ jobs:
         with:
           name: release-dists
           path: dist/
-      - name: Retrieve release distributions
-        uses: actions/download-artifact@v8
-        with:
-          name: release-dists
-          path: dist/
 
       - uses: docker/setup-buildx-action@v4
 
@@ -117,16 +112,6 @@ jobs:
             RUN rm -rf *.whl
             EOF
             
-      - name: Tmp Dockerfile
-        run: |
-            cat <<'EOF' > dist/Dockerfile
-            FROM python:3.11
-            WORKDIR /app
-            COPY *.whl .
-            RUN pip install --no-cache-dir *.whl
-            RUN rm -rf *.whl
-            EOF
-            
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
@@ -136,7 +121,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
 <<<<<<< HEAD
+<<<<<<< HEAD
           labels: ${{ steps.meta.outputs.labels }}
+=======
+>>>>>>> a06a2f2 (fix workflow)
 
 
 =======
