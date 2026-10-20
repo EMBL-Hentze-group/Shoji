@@ -120,19 +120,4 @@ jobs:
           file: ./dist/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-<<<<<<< HEAD
-<<<<<<< HEAD
           labels: ${{ steps.meta.outputs.labels }}
-=======
->>>>>>> a06a2f2 (fix workflow)
-
-
-=======
-<<<<<<< HEAD
-          labels: ${{ steps.meta.outputs.labels }}
-=======
-          labels: ${{ steps.meta.outputs.labels }}
-
-
->>>>>>> 87876ef (cm-opt  merge)
->>>>>>> f0e8947 (cm-opt  merge)
